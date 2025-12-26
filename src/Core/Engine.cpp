@@ -3,7 +3,9 @@
 #include "../Graphics/GraphicsDevice.hpp"
 #include "Scheduler.hpp"
 #include "Systems/PlatformPollSystem.hpp"
+#include "Systems/InputSystem.hpp"
 #include "Systems/RenderSystem.hpp"
+#include "../Input/InputManager.hpp"
 #include <memory>
 #include <chrono>
 
@@ -23,6 +25,7 @@ bool Init(EngineContext& ctx) {
 
     g_scheduler = std::make_unique<Scheduler>();
     g_scheduler->AddSystem(std::make_unique<Titan::Core::Systems::PlatformPollSystem>());
+    g_scheduler->AddSystem(std::make_unique<Titan::Core::Systems::InputSystem>());
     g_scheduler->AddSystem(std::make_unique<Titan::Core::Systems::RenderSystem>());
 
     g_prevTime = std::chrono::high_resolution_clock::now();
@@ -41,6 +44,8 @@ void Update(EngineContext& ctx) {
     frameCtx.dt = ctx.deltaTime;
 
     if (g_scheduler) g_scheduler->UpdateAll(frameCtx);
+
+    Titan::Input::Manager::EndFrame();
 }
 
 void Shutdown(EngineContext& ctx) {
