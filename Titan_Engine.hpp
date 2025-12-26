@@ -1,15 +1,21 @@
-#ifndef TITAN_ENGINE_HPP
-#define TITAN_ENGINE_HPP
-#include "Titan_ECS.hpp"
-#include "Titan_State.hpp"
+#pragma once
+#include "Titan_Input.hpp"
+#include "Titan_Events.hpp"
+
 namespace Titan {
+
 struct Engine {
-    struct Context { bool run; ECS::World w; StateManager sm; };
+    struct Context {
+        bool isRunning;
+        ECS::World world;
+        SnapshotStorage snapshots;
+        EventBus events;
+        InputManager input;
+        StateManager stateMgr;
+    };
+
     static Context* Get();
-    static void Init(const char* t, u32 w, u32 h);
+    static void Init();
     static void Shutdown();
-    static void Quit();
-    static bool IsRunning();
 };
 }
-#endif
