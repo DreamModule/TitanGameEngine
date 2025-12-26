@@ -7,10 +7,22 @@ add_executable(TitanEngine
     src/main.cpp
     src/Core/Engine.cpp
     src/Core/Scheduler.cpp
+    src/Core/FrameContext.hpp
+    src/Core/ISystem.hpp
+    src/Core/Scheduler.hpp
     src/Core/Systems/PlatformPollSystem.cpp
+    src/Core/Systems/PlatformPollSystem.hpp
+    src/Core/Systems/InputSystem.cpp
+    src/Core/Systems/InputSystem.hpp
     src/Core/Systems/RenderSystem.cpp
+    src/Core/Systems/RenderSystem.hpp
     src/Platform/Window_Win32.cpp
+    src/Platform/Window.hpp
+    src/Input/InputManager.cpp
+    src/Input/InputManager.hpp
     src/Graphics/GraphicsDevice_GL.cpp
+    src/Graphics/GraphicsDevice.hpp
+    src/Core/Engine.hpp
 )
 
 target_include_directories(TitanEngine PRIVATE src)
