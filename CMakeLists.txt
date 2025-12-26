@@ -14,14 +14,27 @@ add_executable(TitanEngine
     src/Core/Systems/PlatformPollSystem.hpp
     src/Core/Systems/InputSystem.cpp
     src/Core/Systems/InputSystem.hpp
-    src/Core/Systems/RenderSystem.cpp
-    src/Core/Systems/RenderSystem.hpp
+    src/Core/Systems/RenderEntitySystem.cpp
+    src/Core/Systems/RenderEntitySystem.hpp
     src/Platform/Window_Win32.cpp
     src/Platform/Window.hpp
     src/Input/InputManager.cpp
     src/Input/InputManager.hpp
     src/Graphics/GraphicsDevice_GL.cpp
     src/Graphics/GraphicsDevice.hpp
+    src/Assets/Texture.hpp
+    src/Assets/Loader.hpp
+    src/Assets/Loader.cpp
+    src/Debug/Debug.hpp
+    src/Debug/Debug.cpp
+    src/ECS/Entity.hpp
+    src/ECS/World.hpp
+    src/ECS/Components/Transform.hpp
+    src/ECS/Components/Sprite.hpp
+    src/Scene/SceneManager.hpp
+    src/Scene/SceneManager.cpp
+    src/Scene/SceneSerializer.hpp
+    src/Scene/SceneSerializer.cpp
     src/Core/Engine.hpp
 )
 
