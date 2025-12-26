@@ -1,10 +1,18 @@
 #include "Engine.hpp"
 #include "../Platform/Window.hpp"
 #include "../Graphics/GraphicsDevice.hpp"
+#include "Scheduler.hpp"
+#include "Systems/PlatformPollSystem.hpp"
+#include "Systems/RenderSystem.hpp"
+#include <memory>
+#include <chrono>
 
 namespace Titan::Core::Engine {
 
-bool Init(EngineContext&) {
+static std::unique_ptr<Scheduler> g_scheduler;
+static std::chrono::high_resolution_clock::time_point g_prevTime;
+
+bool Init(EngineContext& ctx) {
     if (!Titan::Platform::Window::Create(1280, 720, "Titan Engine"))
         return false;
 
@@ -13,20 +21,33 @@ bool Init(EngineContext&) {
             Titan::Platform::Window::GetHDC()))
         return false;
 
+    g_scheduler = std::make_unique<Scheduler>();
+    g_scheduler->AddSystem(std::make_unique<Titan::Core::Systems::PlatformPollSystem>());
+    g_scheduler->AddSystem(std::make_unique<Titan::Core::Systems::RenderSystem>());
+
+    g_prevTime = std::chrono::high_resolution_clock::now();
+
     return true;
 }
 
 void Update(EngineContext& ctx) {
-    Titan::Platform::Window::PollEvents();
-    if (Titan::Platform::Window::ShouldClose())
-        ctx.running = false;
+    auto now = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float> diff = now - g_prevTime;
+    g_prevTime = now;
+    ctx.deltaTime = diff.count();
 
-    Titan::Graphics::Device::BeginFrame();
-    Titan::Graphics::Device::EndFrame();
-    Titan::Platform::Window::SwapBuffers();
+    FrameContext frameCtx;
+    frameCtx.engine = &ctx;
+    frameCtx.dt = ctx.deltaTime;
+
+    if (g_scheduler) g_scheduler->UpdateAll(frameCtx);
 }
 
-void Shutdown(EngineContext&) {
+void Shutdown(EngineContext& ctx) {
+    if (g_scheduler) {
+        g_scheduler->Clear();
+        g_scheduler.reset();
+    }
     Titan::Graphics::Device::Shutdown();
     Titan::Platform::Window::Destroy();
 }
