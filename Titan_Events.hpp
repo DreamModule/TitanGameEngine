@@ -1,6 +1,6 @@
-#ifndef TITAN_EVENTS_HPP
-#define TITAN_EVENTS_HPP
-
+#pragma once
+#include <unordered_map>
+#include <vector>
 #include "Titan_Core.hpp"
 
 namespace Titan {
@@ -16,14 +16,27 @@ using EventHandler = void(*)(const EventContext&);
 enum class EventScope { State, Global };
 
 struct EventBus {
-    static std::unordered_map<EventID, std::vector<EventHandler>> globalListeners;
-    static std::unordered_map<EventID, std::vector<EventHandler>> stateListeners;
+    std::unordered_map<EventID, std::vector<EventHandler>> globalListeners;
+    std::unordered_map<EventID, std::vector<EventHandler>> stateListeners;
 
-    static void Init();
-    static void Subscribe(EventID id, EventHandler h, EventScope s = EventScope::State);
-    static void Emit(EventID id, const EventContext& ctx);
-    static void ResetState();
-    static void Shutdown();
+    void Init() {
+        globalListeners.clear();
+        stateListeners.clear();
+    }
+
+    void Subscribe(EventID id, EventHandler h, EventScope s = EventScope::State) {
+        if (s == EventScope::Global) globalListeners[id].push_back(h);
+        else stateListeners[id].push_back(h);
+    }
+
+    void Emit(EventID id, const EventContext& ctx) {
+        if (globalListeners.count(id))
+            for (auto& h : globalListeners[id]) h(ctx);
+        if (stateListeners.count(id))
+            for (auto& h : stateListeners[id]) h(ctx);
+    }
+
+    void ResetState() { stateListeners.clear(); }
+    void Shutdown() { globalListeners.clear(); stateListeners.clear(); }
 };
 }
-#endif
