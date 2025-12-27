@@ -6,10 +6,9 @@
 #include "ECS/Components/Transform.hpp"
 #include "ECS/Components/Sprite.hpp"
 #include "Core/Systems/RenderEntitySystem.hpp"
-#include "Core/Systems/PlatformPollSystem.hpp"
 #include "Input/InputManager.hpp"
+#include "Input/Joystick.hpp"
 #include "Debug/Debug.hpp"
-#include "Assets/Loader.hpp"
 #include <chrono>
 #include <thread>
 #include <memory>
@@ -31,34 +30,49 @@ int main() {
     auto scene = sceneManager->CreateScene("test");
     sceneManager->ActivateScene("test");
 
-    auto e1 = scene->world->CreateEntity();
-    Titan::ECS::Components::Transform t1;
-    t1.x = 640; t1.y = 360; t1.sx = 1.0f; t1.sy = 1.0f;
-    scene->world->transforms.emplace(e1, t1);
-    Titan::ECS::Components::Sprite s1;
-    s1.path = "assets/player.png";
-    scene->world->sprites.emplace(e1, s1);
+    auto ePlayer = scene->world->CreateEntity();
+    Titan::ECS::Components::Transform pt;
+    pt.x = 640; pt.y = 360; pt.sx = 1.0f; pt.sy = 1.0f; pt.rot = 0.0f;
+    scene->world->transforms.emplace(ePlayer, pt);
+    Titan::ECS::Components::Sprite ps;
+    ps.path = "assets/player.png";
+    scene->world->sprites.emplace(ePlayer, ps);
 
-    auto e2 = scene->world->CreateEntity();
-    Titan::ECS::Components::Transform t2;
-    t2.x = 200; t2.y = 200; t2.sx = 1.0f; t2.sy = 1.0f;
-    scene->world->transforms.emplace(e2, t2);
-    Titan::ECS::Components::Sprite s2;
-    s2.path = "assets/enemy.png";
-    scene->world->sprites.emplace(e2, s2);
+    auto eEnemy = scene->world->CreateEntity();
+    Titan::ECS::Components::Transform et;
+    et.x = 300; et.y = 200; et.sx = 1.0f; et.sy = 1.0f; et.rot = 0.0f;
+    scene->world->transforms.emplace(eEnemy, et);
+    Titan::ECS::Components::Sprite es;
+    es.path = "assets/enemy.png";
+    scene->world->sprites.emplace(eEnemy, es);
 
     Titan::Core::Systems::RenderEntitySystem renderSystem;
-    Titan::Core::Systems::PlatformPollSystem pollSystem;
+
+    auto& vj = Titan::Input::Joystick::GetVirtual();
+    if (Titan::Platform::Window::IsAndroid()) vj.SetEnabled(true);
+    else vj.SetEnabled(false);
 
     auto last = std::chrono::high_resolution_clock::now();
-    float rot = 0.0f;
-    bool showDemo = true;
     int fpsCounter = 0;
     float fpsTimer = 0.0f;
     int fps = 0;
 
     while (!Titan::Platform::Window::ShouldClose()) {
-        pollSystem.Update(*(new Titan::Core::FrameContext())); // poll events and potentially set shouldClose
+        Titan::Platform::Window::PollEvents();
+
+        Titan::Input::Joystick::Update();
+
+        bool mouseDown = Titan::Input::Manager::IsKeyDown(VK_LBUTTON);
+        int mx = Titan::Input::Manager::GetMouseX();
+        int my = Titan::Input::Manager::GetMouseY();
+        if (mouseDown && !vj.enabled) {
+            // simulate a virtual touch for testing with mouse even if virtual joystick disabled
+            Titan::Input::Joystick::SimulateVirtualTouchDown((float)mx, (float)my);
+        } else if (mouseDown && vj.enabled) {
+            Titan::Input::Joystick::SimulateVirtualTouchMove((float)mx, (float)my);
+        } else {
+            Titan::Input::Joystick::SimulateVirtualTouchUp();
+        }
 
         auto now = std::chrono::high_resolution_clock::now();
         std::chrono::duration<float> dt = now - last;
@@ -73,39 +87,67 @@ int main() {
             fpsTimer -= 1.0f;
         }
 
-        if (Titan::Input::Manager::IsKeyPressed('S')) {
-            Titan::Scene::SceneSerializer::SaveScene(scene, "autosave.scene");
+        if (Titan::Input::Manager::IsKeyPressed('J')) {
+            vj.SetEnabled(!vj.enabled);
+        }
+        if (Titan::Input::Manager::IsKeyPressed('K')) {
+            vj.SetRadius(vj.radius + 8.0f);
         }
         if (Titan::Input::Manager::IsKeyPressed('L')) {
-            Titan::Scene::SceneSerializer::LoadScene(scene, "autosave.scene");
+            vj.SetRadius(std::max(8.0f, vj.radius - 8.0f));
         }
         if (Titan::Input::Manager::IsKeyPressed(VK_ESCAPE)) break;
 
-        if (Titan::Input::Manager::IsKeyDown(0x25)) scene->world->transforms[e1].x -= 300.0f * delta;
-        if (Titan::Input::Manager::IsKeyDown(0x27)) scene->world->transforms[e1].x += 300.0f * delta;
-        if (Titan::Input::Manager::IsKeyDown(0x26)) scene->world->transforms[e1].y -= 300.0f * delta;
-        if (Titan::Input::Manager::IsKeyDown(0x28)) scene->world->transforms[e1].y += 300.0f * delta;
+        float ax = 0.0f;
+        float ay = 0.0f;
+        if (Titan::Input::Joystick::IsControllerConnected(0)) {
+            ax = Titan::Input::Joystick::GetLeftAxisX(0);
+            ay = -Titan::Input::Joystick::GetLeftAxisY(0);
+        } else if (vj.enabled) {
+            ax = vj.stickX;
+            ay = -vj.stickY;
+        } else {
+            if (Titan::Input::Manager::IsKeyDown(0x25)) ax -= 1.0f;
+            if (Titan::Input::Manager::IsKeyDown(0x27)) ax += 1.0f;
+            if (Titan::Input::Manager::IsKeyDown(0x26)) ay -= 1.0f;
+            if (Titan::Input::Manager::IsKeyDown(0x28)) ay += 1.0f;
+        }
 
-        rot += 60.0f * delta;
-        scene->world->transforms[e2].rot = rot;
+        float speed = 320.0f;
+        auto &ptref = scene->world->transforms[ePlayer];
+        ptref.x += ax * speed * delta;
+        ptref.y += ay * speed * delta;
+
+        if (Titan::Input::Joystick::IsControllerConnected(0)) {
+            auto cs = Titan::Input::Joystick::GetController(0);
+            if (cs.buttons) {
+                // placeholder: if any button pressed, toggle enemy visibility by moving it
+                scene->world->transforms[eEnemy].x = 400 + (cs.buttons % 64);
+            }
+        }
+
+        scene->world->transforms[eEnemy].rot += 90.0f * delta;
 
         Titan::Debug::Begin();
 
         char buf[128];
         sprintf(buf, "FPS: %d", fps);
         Titan::Debug::Text(10, 18, buf);
-        Titan::Debug::Text(10, 36, "Arrows: move player   S: save scene   L: load scene   Esc: quit");
 
-        if (Titan::Debug::Button(10, 60, 140, 28, showDemo ? "Hide Demo Info" : "Show Demo Info")) {
-            showDemo = !showDemo;
+        sprintf(buf, "Virtual J: %s  Radius: %.1f", vj.enabled ? "ON" : "OFF", vj.radius);
+        Titan::Debug::Text(10, 36, buf);
+
+        sprintf(buf, "Joystick AX: %.2f AY: %.2f", ax, ay);
+        Titan::Debug::Text(10, 54, buf);
+
+        if (Titan::Debug::Button(10, 80, 180, 28, vj.enabled ? "Disable Virtual Joy" : "Enable Virtual Joy")) {
+            vj.SetEnabled(!vj.enabled);
         }
-
-        if (showDemo) {
-            Titan::Debug::Rect(10, 100, 300, 120, 0.2f, 0.2f, 0.2f, 0.9f);
-            Titan::Debug::Text(16, 116, "Demo Scene:");
-            Titan::Debug::Text(16, 134, " - Player: controllable with arrows");
-            Titan::Debug::Text(16, 152, " - Enemy: rotates automatically");
-            Titan::Debug::Text(16, 170, " - S/L: save/load scene to autosave.scene");
+        if (Titan::Debug::Button(10, 116, 140, 28, "Increase Radius")) {
+            vj.SetRadius(vj.radius + 8.0f);
+        }
+        if (Titan::Debug::Button(160, 116, 140, 28, "Decrease Radius")) {
+            vj.SetRadius(std::max(8.0f, vj.radius - 8.0f));
         }
 
         Titan::Debug::End();
