@@ -14,12 +14,16 @@ add_executable(TitanEngine
     src/Core/Systems/PlatformPollSystem.hpp
     src/Core/Systems/InputSystem.cpp
     src/Core/Systems/InputSystem.hpp
-    src/Core/Systems/RenderEntitySystem.cpp
-    src/Core/Systems/RenderEntitySystem.hpp
+    src/Core/Systems/RenderSystem.cpp
+    src/Core/Systems/RenderSystem.hpp
+    src/Core/Systems/JoystickSystem.cpp
+    src/Core/Systems/JoystickSystem.hpp
     src/Platform/Window_Win32.cpp
     src/Platform/Window.hpp
     src/Input/InputManager.cpp
     src/Input/InputManager.hpp
+    src/Input/Joystick.cpp
+    src/Input/Joystick.hpp
     src/Graphics/GraphicsDevice_GL.cpp
     src/Graphics/GraphicsDevice.hpp
     src/Assets/Texture.hpp
@@ -29,6 +33,7 @@ add_executable(TitanEngine
     src/Debug/Debug.cpp
     src/ECS/Entity.hpp
     src/ECS/World.hpp
+    src/ECS/World.cpp
     src/ECS/Components/Transform.hpp
     src/ECS/Components/Sprite.hpp
     src/Scene/SceneManager.hpp
@@ -41,5 +46,5 @@ add_executable(TitanEngine
 target_include_directories(TitanEngine PRIVATE src)
 
 if (WIN32)
-    target_link_libraries(TitanEngine PRIVATE opengl32 user32 gdi32)
+    target_link_libraries(TitanEngine PRIVATE opengl32 user32 gdi32 xinput)
 endif()
