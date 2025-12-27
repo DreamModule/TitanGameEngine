@@ -12,4 +12,6 @@ void Destroy();
 HWND GetHWND();
 HDC  GetHDC();
 
+bool IsAndroid();
+
 }
