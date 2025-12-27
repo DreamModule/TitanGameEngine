@@ -1,6 +1,4 @@
 #include "Window.hpp"
-#include "../Input/InputManager.hpp"
-#include <windows.h>
 
 namespace {
     HWND g_hwnd = nullptr;
@@ -14,25 +12,6 @@ namespace {
             return 0;
         case WM_DESTROY:
             PostQuitMessage(0);
-            return 0;
-        case WM_KEYDOWN:
-            Titan::Input::Manager::OnKeyDown((uint32_t)wParam);
-            return 0;
-        case WM_KEYUP:
-            Titan::Input::Manager::OnKeyUp((uint32_t)wParam);
-            return 0;
-        case WM_MOUSEMOVE:
-            {
-                int x = LOWORD(lParam);
-                int y = HIWORD(lParam);
-                Titan::Input::Manager::OnMouseMove(x, y);
-            }
-            return 0;
-        case WM_LBUTTONDOWN:
-            Titan::Input::Manager::OnKeyDown(VK_LBUTTON);
-            return 0;
-        case WM_LBUTTONUP:
-            Titan::Input::Manager::OnKeyUp(VK_LBUTTON);
             return 0;
         default:
             return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -105,6 +84,10 @@ HWND GetHWND() {
 
 HDC GetHDC() {
     return g_hdc;
+}
+
+bool IsAndroid() {
+    return false;
 }
 
 }
