@@ -986,4 +986,144 @@ std::vector<uint32_t> indices;
 
 const float PI = 3.14159265359f;
 const float radius = 0.
-//will end soon, sorry :c
+//will end soon, sorry :c (done)
+Mesh* Mesh::CreateCapsule(uint32_t segments) {
+using namespace ECS::Components;
+
+```
+if (segments < 4) segments = 4;
+
+std::vector<Vertex> vertices;
+std::vector<uint32_t> indices;
+
+const float PI = 3.14159265359f;
+const float radius = 0.5f;
+const float cylinderHeight = 1.0f;
+const float halfCylinder = cylinderHeight * 0.5f;
+
+uint32_t rings = segments / 2;
+
+for (uint32_t lat = 0; lat <= rings; ++lat) {
+    float theta = lat * (PI * 0.5f) / rings;
+    float sinTheta = std::sin(theta);
+    float cosTheta = std::cos(theta);
+    
+    for (uint32_t lon = 0; lon <= segments; ++lon) {
+        float phi = lon * 2.0f * PI / segments;
+        float sinPhi = std::sin(phi);
+        float cosPhi = std::cos(phi);
+        
+        Vec3 normal(cosPhi * sinTheta, cosTheta, sinPhi * sinTheta);
+        Vec3 position = normal * radius;
+        position.y += halfCylinder;
+        
+        Vertex v;
+        v.position = position;
+        v.normal = normal;
+        v.texCoordX = (float)lon / segments;
+        v.texCoordY = 1.0f - (float)lat / rings * 0.5f;
+        vertices.push_back(v);
+    }
+}
+
+uint32_t topHemisphereEnd = static_cast<uint32_t>(vertices.size());
+
+for (uint32_t i = 0; i <= segments; ++i) {
+    float angle = (float)i * 2.0f * PI / segments;
+    float x = std::cos(angle) * radius;
+    float z = std::sin(angle) * radius;
+    
+    Vec3 normal(x, 0.0f, z);
+    normal = normal.Normalized();
+    
+    Vertex vTop, vBottom;
+    vTop.position = Vec3(x, halfCylinder, z);
+    vTop.normal = normal;
+    vTop.texCoordX = (float)i / segments;
+    vTop.texCoordY = 0.5f;
+    
+    vBottom.position = Vec3(x, -halfCylinder, z);
+    vBottom.normal = normal;
+    vBottom.texCoordX = (float)i / segments;
+    vBottom.texCoordY = 0.5f;
+    
+    vertices.push_back(vTop);
+    vertices.push_back(vBottom);
+}
+
+uint32_t cylinderEnd = static_cast<uint32_t>(vertices.size());
+
+for (uint32_t lat = 0; lat <= rings; ++lat) {
+    float theta = lat * (PI * 0.5f) / rings;
+    float sinTheta = std::sin(theta);
+    float cosTheta = std::cos(theta);
+    
+    for (uint32_t lon = 0; lon <= segments; ++lon) {
+        float phi = lon * 2.0f * PI / segments;
+        float sinPhi = std::sin(phi);
+        float cosPhi = std::cos(phi);
+        
+        Vec3 normal(cosPhi * sinTheta, -cosTheta, sinPhi * sinTheta);
+        Vec3 position = normal * radius;
+        position.y -= halfCylinder;
+        
+        Vertex v;
+        v.position = position;
+        v.normal = normal;
+        v.texCoordX = (float)lon / segments;
+        v.texCoordY = 0.5f - (float)lat / rings * 0.5f;
+        vertices.push_back(v);
+    }
+}
+
+for (uint32_t lat = 0; lat < rings; ++lat) {
+    for (uint32_t lon = 0; lon < segments; ++lon) {
+        uint32_t first = lat * (segments + 1) + lon;
+        uint32_t second = first + segments + 1;
+        
+        indices.push_back(first);
+        indices.push_back(second);
+        indices.push_back(first + 1);
+        
+        indices.push_back(second);
+        indices.push_back(second + 1);
+        indices.push_back(first + 1);
+    }
+}
+
+uint32_t cylinderStart = topHemisphereEnd;
+for (uint32_t i = 0; i < segments; ++i) {
+    uint32_t base = cylinderStart + i * 2;
+    indices.push_back(base);
+    indices.push_back(base + 2);
+    indices.push_back(base + 1);
+    
+    indices.push_back(base + 1);
+    indices.push_back(base + 2);
+    indices.push_back(base + 3);
+}
+
+uint32_t bottomStart = cylinderEnd;
+for (uint32_t lat = 0; lat < rings; ++lat) {
+    for (uint32_t lon = 0; lon < segments; ++lon) {
+        uint32_t first = bottomStart + lat * (segments + 1) + lon;
+        uint32_t second = first + segments + 1;
+        
+        indices.push_back(first);
+        indices.push_back(second);
+        indices.push_back(first + 1);
+        
+        indices.push_back(second);
+        indices.push_back(second + 1);
+        indices.push_back(first + 1);
+    }
+}
+
+Mesh* mesh = new Mesh();
+mesh->LoadFromData(vertices, indices);
+return mesh;
+```
+
+}
+
+}
