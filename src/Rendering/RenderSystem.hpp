@@ -1,212 +1,106 @@
 #pragma once
 
-#include “../../Scene/SceneManager.hpp”
-#include “../../ECS/Components/Transform.hpp”
-#include “../../ECS/Components/MeshRenderer.hpp”
-#include “../../ECS/Components/Camera.hpp”
-#include <vector>
-#include <unordered_map>
+#include “../Scene/SceneManager.hpp”
+#include “../ECS/Components/Transform.hpp”
+#include “../ECS/Components/MeshRenderer.hpp”
+#include “../ECS/Components/Camera.hpp”
+#include “../Graphics/Renderer.hpp”
+#include “../Platform/Window.hpp”
 
 namespace Titan::Rendering {
 
 using namespace ECS::Components;
-
-struct RenderCommand {
-uint32_t meshId;
-uint32_t materialId;
-Vec3 position;
-Quaternion rotation;
-Vec3 scale;
-Color tint;
-int layer;
-};
-
-struct CameraData {
-Vec3 position;
-Quaternion rotation;
-ProjectionType projectionType;
-float fov;
-float nearClip;
-float farClip;
-float orthoSize;
-float aspectRatio;
-int renderOrder;
-};
+using namespace Graphics;
 
 class RenderSystem : public Scene::ISystem {
 public:
-RenderSystem() = default;
+void OnInit() override {
+Renderer::Get().Init();
 
 ```
-void OnInit() override {
-    InitOpenGL();
+    cubeMeshId = Renderer::Get().CreateCubeMesh();
+    
+    Renderer::Get().SetClearColor(0.1f, 0.1f, 0.12f, 1.0f);
 }
 
 void OnShutdown() override {
-    CleanupOpenGL();
+    Renderer::Get().Shutdown();
 }
 
 void OnRender() override {
     auto scene = Scene::SceneManager::Get().GetActiveScene();
     if (!scene || !scene->world) return;
     
-    CollectCameras(scene->world.get());
-    CollectRenderCommands(scene->world.get());
+    uint32_t width = Platform::Window::GetWidth();
+    uint32_t height = Platform::Window::GetHeight();
     
-    for (auto& camera : cameras) {
-        RenderWithCamera(camera);
+    Renderer::Get().SetViewport(0, 0, width, height);
+    Renderer::Get().BeginFrame();
+    
+    Camera* primaryCamera = nullptr;
+    Transform* cameraTransform = nullptr;
+    
+    scene->world->Each<Transform, Camera>([&](ECS::Entity e, Transform& t, Camera& cam) {
+        if (cam.isPrimary || !primaryCamera) {
+            primaryCamera = &cam;
+            cameraTransform = &t;
+        }
+    });
+    
+    if (primaryCamera && cameraTransform) {
+        Mat4 view = Mat4::LookAt(
+            cameraTransform->position,
+            cameraTransform->position + cameraTransform->Forward(),
+            Vec3::Up()
+        );
+        
+        Mat4 projection;
+        if (primaryCamera->projectionType == ProjectionType::Perspective) {
+            float aspect = (float)width / (float)height;
+            projection = Mat4::Perspective(
+                primaryCamera->fieldOfView,
+                aspect,
+                primaryCamera->nearClip,
+                primaryCamera->farClip
+            );
+        } else {
+            float halfWidth = primaryCamera->orthographicSize * primaryCamera->aspectRatio * 0.5f;
+            float halfHeight = primaryCamera->orthographicSize * 0.5f;
+            projection = Mat4::Orthographic(
+                -halfWidth, halfWidth,
+                -halfHeight, halfHeight,
+                primaryCamera->nearClip,
+                primaryCamera->farClip
+            );
+        }
+        
+        Renderer::Get().BeginScene(view, projection);
+        
+        scene->world->Each<Transform, MeshRenderer>([this](ECS::Entity e, Transform& t, MeshRenderer& mr) {
+            if (!mr.visible) return;
+            
+            uint32_t meshId = cubeMeshId;
+            uint32_t textureId = 0;
+            
+            Renderer::Get().Submit(
+                t.position,
+                t.rotation,
+                t.scale,
+                meshId,
+                textureId,
+                mr.tint
+            );
+        });
+        
+        Renderer::Get().EndScene();
     }
     
-    cameras.clear();
-    renderCommands.clear();
+    Renderer::Get().EndFrame();
 }
 ```
 
 private:
-std::vector<CameraData> cameras;
-std::vector<RenderCommand> renderCommands;
-
-```
-uint32_t quadVAO = 0;
-uint32_t quadVBO = 0;
-uint32_t quadEBO = 0;
-uint32_t instanceVBO = 0;
-
-void InitOpenGL() {
-    CreateQuadGeometry();
-}
-
-void CleanupOpenGL() {
-    if (quadVAO) glDeleteVertexArrays(1, &quadVAO);
-    if (quadVBO) glDeleteBuffers(1, &quadVBO);
-    if (quadEBO) glDeleteBuffers(1, &quadEBO);
-    if (instanceVBO) glDeleteBuffers(1, &instanceVBO);
-}
-
-void CreateQuadGeometry() {
-    float vertices[] = {
-        -0.5f, -0.5f, 0.0f,  0.0f, 0.0f,
-         0.5f, -0.5f, 0.0f,  1.0f, 0.0f,
-         0.5f,  0.5f, 0.0f,  1.0f, 1.0f,
-        -0.5f,  0.5f, 0.0f,  0.0f, 1.0f
-    };
-    
-    uint32_t indices[] = {
-        0, 1, 2,
-        2, 3, 0
-    };
-    
-    glGenVertexArrays(1, &quadVAO);
-    glGenBuffers(1, &quadVBO);
-    glGenBuffers(1, &quadEBO);
-    glGenBuffers(1, &instanceVBO);
-    
-    glBindVertexArray(quadVAO);
-    
-    glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-    
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, quadEBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-    
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-    
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
-    
-    glBindVertexArray(0);
-}
-
-void CollectCameras(ECS::World* world) {
-    world->Each<Transform, Camera>([this](ECS::Entity entity, Transform& t, Camera& cam) {
-        CameraData camData;
-        camData.position = t.position;
-        camData.rotation = t.rotation;
-        camData.projectionType = cam.projectionType;
-        camData.fov = cam.fieldOfView;
-        camData.nearClip = cam.nearClip;
-        camData.farClip = cam.farClip;
-        camData.orthoSize = cam.orthographicSize;
-        camData.aspectRatio = cam.aspectRatio;
-        camData.renderOrder = cam.renderOrder;
-        
-        cameras.push_back(camData);
-    });
-    
-    std::sort(cameras.begin(), cameras.end(), 
-        [](const CameraData& a, const CameraData& b) {
-            return a.renderOrder < b.renderOrder;
-        });
-}
-
-void CollectRenderCommands(ECS::World* world) {
-    world->Each<Transform, MeshRenderer>([this](ECS::Entity entity, Transform& t, MeshRenderer& mr) {
-        if (!mr.visible) return;
-        
-        RenderCommand cmd;
-        cmd.meshId = mr.meshId;
-        cmd.materialId = mr.materialId;
-        cmd.position = t.position;
-        cmd.rotation = t.rotation;
-        cmd.scale = t.scale;
-        cmd.tint = mr.tint;
-        cmd.layer = mr.renderLayer;
-        
-        renderCommands.push_back(cmd);
-    });
-    
-    std::sort(renderCommands.begin(), renderCommands.end(),
-        [](const RenderCommand& a, const RenderCommand& b) {
-            if (a.layer != b.layer) return a.layer < b.layer;
-            if (a.materialId != b.materialId) return a.materialId < b.materialId;
-            return a.meshId < b.meshId;
-        });
-}
-
-void RenderWithCamera(const CameraData& camera) {
-    SetupCameraMatrices(camera);
-    
-    uint32_t currentMaterial = 0;
-    uint32_t currentMesh = 0;
-    
-    for (const auto& cmd : renderCommands) {
-        if (cmd.materialId != currentMaterial) {
-            BindMaterial(cmd.materialId);
-            currentMaterial = cmd.materialId;
-        }
-        
-        if (cmd.meshId != currentMesh) {
-            BindMesh(cmd.meshId);
-            currentMesh = cmd.meshId;
-        }
-        
-        SetModelMatrix(cmd.position, cmd.rotation, cmd.scale);
-        SetTint(cmd.tint);
-        
-        DrawMesh(cmd.meshId);
-    }
-}
-
-void SetupCameraMatrices(const CameraData& camera) {
-}
-
-void BindMaterial(uint32_t materialId) {
-}
-
-void BindMesh(uint32_t meshId) {
-}
-
-void SetModelMatrix(const Vec3& pos, const Quaternion& rot, const Vec3& scale) {
-}
-
-void SetTint(const Color& tint) {
-}
-
-void DrawMesh(uint32_t meshId) {
-}
-```
-
+uint32_t cubeMeshId = 0;
 };
 
 }
