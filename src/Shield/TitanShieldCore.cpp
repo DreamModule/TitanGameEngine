@@ -1,348 +1,1186 @@
-#include “TitanShieldCore.h”
-#include <random>
-#include <chrono>
-#include <cstring>
-#include <algorithm>
-#include <fstream>
-
-#ifdef _WIN32
-#include <windows.h>
-#include <winternl.h>
-#include <tlhelp32.h>
-#include <psapi.h>
-#pragma comment(lib, “ntdll.lib”)
-#elif **ANDROID**
-#include <unistd.h>
-#include <sys/ptrace.h>
-#include <sys/stat.h>
-#include <dlfcn.h>
-#endif
-
-namespace TitanShield {
-
-static const uint8_t AES_SBOX[256] = {
-0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
-0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0,
-0xB7, 0xFD, 0x93, 0x26, 0x36, 0x3F, 0xF7, 0xCC, 0x34, 0xA5, 0xE5, 0xF1, 0x71, 0xD8, 0x31, 0x15,
-0x04, 0xC7, 0x23, 0xC3, 0x18, 0x96, 0x05, 0x9A, 0x07, 0x12, 0x80, 0xE2, 0xEB, 0x27, 0xB2, 0x75,
-0x09, 0x83, 0x2C, 0x1A, 0x1B, 0x6E, 0x5A, 0xA0, 0x52, 0x3B, 0xD6, 0xB3, 0x29, 0xE3, 0x2F, 0x84,
-0x53, 0xD1, 0x00, 0xED, 0x20, 0xFC, 0xB1, 0x5B, 0x6A, 0xCB, 0xBE, 0x39, 0x4A, 0x4C, 0x58, 0xCF,
-0xD0, 0xEF, 0xAA, 0xFB, 0x43, 0x4D, 0x33, 0x85, 0x45, 0xF9, 0x02, 0x7F, 0x50, 0x3C, 0x9F, 0xA8,
-0x51, 0xA3, 0x40, 0x8F, 0x92, 0x9D, 0x38, 0xF5, 0xBC, 0xB6, 0xDA, 0x21, 0x10, 0xFF, 0xF3, 0xD2,
-0xCD, 0x0C, 0x13, 0xEC, 0x5F, 0x97, 0x44, 0x17, 0xC4, 0xA7, 0x7E, 0x3D, 0x64, 0x5D, 0x19, 0x73,
-0x60, 0x81, 0x4F, 0xDC, 0x22, 0x2A, 0x90, 0x88, 0x46, 0xEE, 0xB8, 0x14, 0xDE, 0x5E, 0x0B, 0xDB,
-0xE0, 0x32, 0x3A, 0x0A, 0x49, 0x06, 0x24, 0x5C, 0xC2, 0xD3, 0xAC, 0x62, 0x91, 0x95, 0xE4, 0x79,
-0xE7, 0xC8, 0x37, 0x6D, 0x8D, 0xD5, 0x4E, 0xA9, 0x6C, 0x56, 0xF4, 0xEA, 0x65, 0x7A, 0xAE, 0x08,
-0xBA, 0x78, 0x25, 0x2E, 0x1C, 0xA6, 0xB4, 0xC6, 0xE8, 0xDD, 0x74, 0x1F, 0x4B, 0xBD, 0x8B, 0x8A,
-0x70, 0x3E, 0xB5, 0x66, 0x48, 0x03, 0xF6, 0x0E, 0x61, 0x35, 0x57, 0xB9, 0x86, 0xC1, 0x1D, 0x9E,
-0xE1, 0xF8, 0x98, 0x11, 0x69, 0xD9, 0x8E, 0x94, 0x9B, 0x1E, 0x87, 0xE9, 0xCE, 0x55, 0x28, 0xDF,
-0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16
+static const uint32_t SHA256_K[64] = {
+0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 };
 
-static const uint8_t AES_INV_SBOX[256] = {
-0x52, 0x09, 0x6A, 0xD5, 0x30, 0x36, 0xA5, 0x38, 0xBF, 0x40, 0xA3, 0x9E, 0x81, 0xF3, 0xD7, 0xFB,
-0x7C, 0xE3, 0x39, 0x82, 0x9B, 0x2F, 0xFF, 0x87, 0x34, 0x8E, 0x43, 0x44, 0xC4, 0xDE, 0xE9, 0xCB,
-0x54, 0x7B, 0x94, 0x32, 0xA6, 0xC2, 0x23, 0x3D, 0xEE, 0x4C, 0x95, 0x0B, 0x42, 0xFA, 0xC3, 0x4E,
-0x08, 0x2E, 0xA1, 0x66, 0x28, 0xD9, 0x24, 0xB2, 0x76, 0x5B, 0xA2, 0x49, 0x6D, 0x8B, 0xD1, 0x25,
-0x72, 0xF8, 0xF6, 0x64, 0x86, 0x68, 0x98, 0x16, 0xD4, 0xA4, 0x5C, 0xCC, 0x5D, 0x65, 0xB6, 0x92,
-0x6C, 0x70, 0x48, 0x50, 0xFD, 0xED, 0xB9, 0xDA, 0x5E, 0x15, 0x46, 0x57, 0xA7, 0x8D, 0x9D, 0x84,
-0x90, 0xD8, 0xAB, 0x00, 0x8C, 0xBC, 0xD3, 0x0A, 0xF7, 0xE4, 0x58, 0x05, 0xB8, 0xB3, 0x45, 0x06,
-0xD0, 0x2C, 0x1E, 0x8F, 0xCA, 0x3F, 0x0F, 0x02, 0xC1, 0xAF, 0xBD, 0x03, 0x01, 0x13, 0x8A, 0x6B,
-0x3A, 0x91, 0x11, 0x41, 0x4F, 0x67, 0xDC, 0xEA, 0x97, 0xF2, 0xCF, 0xCE, 0xF0, 0xB4, 0xE6, 0x73,
-0x96, 0xAC, 0x74, 0x22, 0xE7, 0xAD, 0x35, 0x85, 0xE2, 0xF9, 0x37, 0xE8, 0x1C, 0x75, 0xDF, 0x6E,
-0x47, 0xF1, 0x1A, 0x71, 0x1D, 0x29, 0xC5, 0x89, 0x6F, 0xB7, 0x62, 0x0E, 0xAA, 0x18, 0xBE, 0x1B,
-0xFC, 0x56, 0x3E, 0x4B, 0xC6, 0xD2, 0x79, 0x20, 0x9A, 0xDB, 0xC0, 0xFE, 0x78, 0xCD, 0x5A, 0xF4,
-0x1F, 0xDD, 0xA8, 0x33, 0x88, 0x07, 0xC7, 0x31, 0xB1, 0x12, 0x10, 0x59, 0x27, 0x80, 0xEC, 0x5F,
-0x60, 0x51, 0x7F, 0xA9, 0x19, 0xB5, 0x4A, 0x0D, 0x2D, 0xE5, 0x7A, 0x9F, 0x93, 0xC9, 0x9C, 0xEF,
-0xA0, 0xE0, 0x3B, 0x4D, 0xAE, 0x2A, 0xF5, 0xB0, 0xC8, 0xEB, 0xBB, 0x3C, 0x83, 0x53, 0x99, 0x61,
-0x17, 0x2B, 0x04, 0x7E, 0xBA, 0x77, 0xD6, 0x26, 0xE1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0C, 0x7D
-};
-
-static const uint8_t AES_RCON[11] = {
-0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36
-};
-
-RealAES128::RealAES128() : initialized(false) {
-keySchedule.fill(0);
+uint32_t RealSHA256::RotateRight(uint32_t value, uint32_t bits) {
+return (value >> bits) | (value << (32 - bits));
 }
 
-RealAES128::~RealAES128() {
-SecureWipe();
+uint32_t RealSHA256::Ch(uint32_t x, uint32_t y, uint32_t z) {
+return (x & y) ^ (~x & z);
 }
 
-uint8_t RealAES128::GaloisMultiply(uint8_t a, uint8_t b) {
-uint8_t p = 0;
-for (int i = 0; i < 8; i++) {
-if (b & 1) {
-p ^= a;
-}
-bool highBitSet = (a & 0x80) != 0;
-a <<= 1;
-if (highBitSet) {
-a ^= 0x1B;
-}
-b >>= 1;
-}
-return p;
+uint32_t RealSHA256::Maj(uint32_t x, uint32_t y, uint32_t z) {
+return (x & y) ^ (x & z) ^ (y & z);
 }
 
-void RealAES128::KeyExpansion(const uint8_t* key) {
-for (int i = 0; i < 4; i++) {
-keySchedule[i] = (key[4*i] << 24) | (key[4*i+1] << 16) | (key[4*i+2] << 8) | key[4*i+3];
+uint32_t RealSHA256::Sigma0(uint32_t x) {
+return RotateRight(x, 2) ^ RotateRight(x, 13) ^ RotateRight(x, 22);
 }
+
+uint32_t RealSHA256::Sigma1(uint32_t x) {
+return RotateRight(x, 6) ^ RotateRight(x, 11) ^ RotateRight(x, 25);
+}
+
+uint32_t RealSHA256::sigma0(uint32_t x) {
+return RotateRight(x, 7) ^ RotateRight(x, 18) ^ (x >> 3);
+}
+
+uint32_t RealSHA256::sigma1(uint32_t x) {
+return RotateRight(x, 17) ^ RotateRight(x, 19) ^ (x >> 10);
+}
+
+void RealSHA256::Transform(uint32_t state[8], const uint8_t block[64]) {
+uint32_t w[64];
 
 ```
-for (int i = 4; i < 44; i++) {
-    uint32_t temp = keySchedule[i-1];
-    
-    if (i % 4 == 0) {
-        uint32_t rotated = ((temp << 8) | (temp >> 24));
-        
-        uint8_t b0 = AES_SBOX[(rotated >> 24) & 0xFF];
-        uint8_t b1 = AES_SBOX[(rotated >> 16) & 0xFF];
-        uint8_t b2 = AES_SBOX[(rotated >> 8) & 0xFF];
-        uint8_t b3 = AES_SBOX[rotated & 0xFF];
-        
-        temp = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
-        temp ^= (AES_RCON[i/4] << 24);
+for (int i = 0; i < 16; i++) {
+    w[i] = (block[i*4] << 24) | (block[i*4+1] << 16) | (block[i*4+2] << 8) | block[i*4+3];
+}
+
+for (int i = 16; i < 64; i++) {
+    w[i] = sigma1(w[i-2]) + w[i-7] + sigma0(w[i-15]) + w[i-16];
+}
+
+uint32_t a = state[0], b = state[1], c = state[2], d = state[3];
+uint32_t e = state[4], f = state[5], g = state[6], h = state[7];
+
+for (int i = 0; i < 64; i++) {
+    uint32_t t1 = h + Sigma1(e) + Ch(e, f, g) + SHA256_K[i] + w[i];
+    uint32_t t2 = Sigma0(a) + Maj(a, b, c);
+    h = g;
+    g = f;
+    f = e;
+    e = d + t1;
+    d = c;
+    c = b;
+    b = a;
+    a = t1 + t2;
+}
+
+state[0] += a; state[1] += b; state[2] += c; state[3] += d;
+state[4] += e; state[5] += f; state[6] += g; state[7] += h;
+```
+
+}
+
+std::array<uint8_t, 32> RealSHA256::Hash(const uint8_t* data, size_t length) {
+uint32_t state[8] = {
+0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+};
+
+```
+uint64_t bitLength = length * 8;
+size_t paddedLength = ((length + 8) / 64 + 1) * 64;
+std::vector<uint8_t> padded(paddedLength, 0);
+
+std::memcpy(padded.data(), data, length);
+padded[length] = 0x80;
+
+for (int i = 0; i < 8; i++) {
+    padded[paddedLength - 1 - i] = (bitLength >> (i * 8)) & 0xFF;
+}
+
+for (size_t i = 0; i < paddedLength; i += 64) {
+    Transform(state, &padded[i]);
+}
+
+std::array<uint8_t, 32> result;
+for (int i = 0; i < 8; i++) {
+    result[i*4] = (state[i] >> 24) & 0xFF;
+    result[i*4+1] = (state[i] >> 16) & 0xFF;
+    result[i*4+2] = (state[i] >> 8) & 0xFF;
+    result[i*4+3] = state[i] & 0xFF;
+}
+
+return result;
+```
+
+}
+
+std::array<uint8_t, 32> RealSHA256::Hash(const std::vector<uint8_t>& data) {
+return Hash(data.data(), data.size());
+}
+
+uint64_t RealSHA256::QuickHash64(const uint8_t* data, size_t length) {
+auto hash = Hash(data, length);
+uint64_t result = 0;
+for (int i = 0; i < 8; i++) {
+result ^= static_cast<uint64_t>(hash[i]) << (i * 8);
+}
+return result;
+}
+
+KeyFragmentExtractor::FragmentLocations KeyFragmentExtractor::fragmentLocations_;
+std::mutex KeyFragmentExtractor::extractorMutex_;
+
+uint8_t KeyFragmentExtractor::CalculateFragmentChecksum(const uint8_t* data, size_t len) {
+uint8_t checksum = 0xFF;
+for (size_t i = 0; i < len; i++) {
+checksum ^= data[i];
+checksum = (checksum << 1) | (checksum >> 7);
+}
+return checksum;
+}
+
+bool KeyFragmentExtractor::ValidateFragment(const KeyFragment& fragment) {
+if (!fragment.valid) return false;
+uint8_t calculatedChecksum = CalculateFragmentChecksum(fragment.encryptedData.data(), fragment.encryptedData.size());
+return calculatedChecksum == fragment.checksum;
+}
+
+bool KeyFragmentExtractor::ScanExecutableForFragments(std::array<KeyFragment, TITAN_KEY_FRAGMENTS>& fragments) {
+#ifdef *WIN32
+std::lock_guard<std::mutex> lock(extractorMutex*);
+
+```
+char exePath[MAX_PATH];
+GetModuleFileNameA(NULL, exePath, MAX_PATH);
+
+std::ifstream file(exePath, std::ios::binary | std::ios::ate);
+if (!file.is_open()) return false;
+
+size_t fileSize = file.tellg();
+file.seekg(0, std::ios::beg);
+
+std::vector<uint8_t> fileData(fileSize);
+file.read(reinterpret_cast<char*>(fileData.data()), fileSize);
+file.close();
+
+const uint8_t marker[] = {0x54, 0x49, 0x54, 0x4B, 0x45, 0x59};
+int foundFragments = 0;
+
+for (size_t i = 0; i < fileSize - sizeof(marker) - TITAN_FRAGMENT_SIZE - 1 && foundFragments < TITAN_KEY_FRAGMENTS; i++) {
+    bool match = true;
+    for (size_t j = 0; j < sizeof(marker); j++) {
+        if (fileData[i + j] != marker[j]) {
+            match = false;
+            break;
+        }
     }
     
-    keySchedule[i] = keySchedule[i-4] ^ temp;
+    if (match) {
+        KeyFragment frag;
+        frag.hexOffset = i;
+        
+        size_t dataOffset = i + sizeof(marker);
+        std::memcpy(frag.encryptedData.data(), &fileData[dataOffset], TITAN_FRAGMENT_SIZE);
+        
+        frag.checksum = fileData[dataOffset + TITAN_FRAGMENT_SIZE];
+        frag.valid = true;
+        
+        if (ValidateFragment(frag)) {
+            fragments[foundFragments] = frag;
+            foundFragments++;
+            i += sizeof(marker) + TITAN_FRAGMENT_SIZE;
+        }
+    }
 }
+
+return foundFragments == TITAN_KEY_FRAGMENTS;
 ```
 
+#else
+return false;
+#endif
 }
 
-void RealAES128::AddRoundKey(uint8_t* state, const uint32_t* roundKey) {
-for (int i = 0; i < 4; i++) {
-uint32_t k = roundKey[i];
-state[4*i] ^= (k >> 24) & 0xFF;
-state[4*i+1] ^= (k >> 16) & 0xFF;
-state[4*i+2] ^= (k >> 8) & 0xFF;
-state[4*i+3] ^= k & 0xFF;
-}
-}
-
-void RealAES128::SubBytes(uint8_t* state) {
-for (int i = 0; i < 16; i++) {
-state[i] = AES_SBOX[state[i]];
-}
-}
-
-void RealAES128::InvSubBytes(uint8_t* state) {
-for (int i = 0; i < 16; i++) {
-state[i] = AES_INV_SBOX[state[i]];
-}
-}
-
-void RealAES128::ShiftRows(uint8_t* state) {
-uint8_t temp;
+bool KeyFragmentExtractor::ExtractAndAssembleKey(std::vector<uint8_t>& key256) {
+std::array<KeyFragment, TITAN_KEY_FRAGMENTS> fragments;
 
 ```
-temp = state[1];
-state[1] = state[5];
-state[5] = state[9];
-state[9] = state[13];
-state[13] = temp;
-
-temp = state[2];
-state[2] = state[10];
-state[10] = temp;
-temp = state[6];
-state[6] = state[14];
-state[14] = temp;
-
-temp = state[15];
-state[15] = state[11];
-state[11] = state[7];
-state[7] = state[3];
-state[3] = temp;
-```
-
+if (!ScanExecutableForFragments(fragments)) {
+    return false;
 }
 
-void RealAES128::InvShiftRows(uint8_t* state) {
-uint8_t temp;
+key256.resize(32);
 
-```
-temp = state[13];
-state[13] = state[9];
-state[9] = state[5];
-state[5] = state[1];
-state[1] = temp;
-
-temp = state[2];
-state[2] = state[10];
-state[10] = temp;
-temp = state[6];
-state[6] = state[14];
-state[14] = temp;
-
-temp = state[3];
-state[3] = state[7];
-state[7] = state[11];
-state[11] = state[15];
-state[15] = temp;
-```
-
+for (int i = 0; i < TITAN_KEY_FRAGMENTS; i++) {
+    for (int j = 0; j < TITAN_FRAGMENT_SIZE; j++) {
+        uint8_t byte = fragments[i].encryptedData[j];
+        byte ^= static_cast<uint8_t>((i * 37 + j * 13) & 0xFF);
+        byte = ~byte;
+        key256[i * TITAN_FRAGMENT_SIZE + j] = byte;
+    }
 }
-
-void RealAES128::MixColumns(uint8_t* state) {
-for (int i = 0; i < 4; i++) {
-uint8_t s0 = state[4*i];
-uint8_t s1 = state[4*i+1];
-uint8_t s2 = state[4*i+2];
-uint8_t s3 = state[4*i+3];
-
-```
-    state[4*i] = GaloisMultiply(s0, 2) ^ GaloisMultiply(s1, 3) ^ s2 ^ s3;
-    state[4*i+1] = s0 ^ GaloisMultiply(s1, 2) ^ GaloisMultiply(s2, 3) ^ s3;
-    state[4*i+2] = s0 ^ s1 ^ GaloisMultiply(s2, 2) ^ GaloisMultiply(s3, 3);
-    state[4*i+3] = GaloisMultiply(s0, 3) ^ s1 ^ s2 ^ GaloisMultiply(s3, 2);
-}
-```
-
-}
-
-void RealAES128::InvMixColumns(uint8_t* state) {
-for (int i = 0; i < 4; i++) {
-uint8_t s0 = state[4*i];
-uint8_t s1 = state[4*i+1];
-uint8_t s2 = state[4*i+2];
-uint8_t s3 = state[4*i+3];
-
-```
-    state[4*i] = GaloisMultiply(s0, 14) ^ GaloisMultiply(s1, 11) ^ GaloisMultiply(s2, 13) ^ GaloisMultiply(s3, 9);
-    state[4*i+1] = GaloisMultiply(s0, 9) ^ GaloisMultiply(s1, 14) ^ GaloisMultiply(s2, 11) ^ GaloisMultiply(s3, 13);
-    state[4*i+2] = GaloisMultiply(s0, 13) ^ GaloisMultiply(s1, 9) ^ GaloisMultiply(s2, 14) ^ GaloisMultiply(s3, 11);
-    state[4*i+3] = GaloisMultiply(s0, 11) ^ GaloisMultiply(s1, 13) ^ GaloisMultiply(s2, 9) ^ GaloisMultiply(s3, 14);
-}
-```
-
-}
-
-bool RealAES128::Initialize(const std::vector<uint8_t>& key) {
-std::lock_guard<std::mutex> lock(cryptoMutex);
-
-```
-if (key.size() != 16) return false;
-
-KeyExpansion(key.data());
-initialized = true;
 
 return true;
 ```
 
 }
 
-void RealAES128::EncryptBlock(const uint8_t* input, uint8_t* output) {
-uint8_t state[16];
-std::memcpy(state, input, 16);
-
-```
-AddRoundKey(state, &keySchedule[0]);
-
-for (int round = 1; round < 10; round++) {
-    SubBytes(state);
-    ShiftRows(state);
-    MixColumns(state);
-    AddRoundKey(state, &keySchedule[round * 4]);
+void KeyFragmentExtractor::RegisterFragmentLocation(uint32_t fragmentIndex, uint64_t offset) {
+std::lock_guard<std::mutex> lock(extractorMutex_);
+if (fragmentIndex < TITAN_KEY_FRAGMENTS) {
+fragmentLocations_.offsets[fragmentIndex] = offset;
+fragmentLocations_.initialized = true;
+}
 }
 
-SubBytes(state);
-ShiftRows(state);
-AddRoundKey(state, &keySchedule[40]);
-
-std::memcpy(output, state, 16);
-```
-
+bool KeyFragmentExtractor::VerifyFragmentIntegrity() {
+std::array<KeyFragment, TITAN_KEY_FRAGMENTS> fragments;
+return ScanExecutableForFragments(fragments);
 }
 
-void RealAES128::DecryptBlock(const uint8_t* input, uint8_t* output) {
-uint8_t state[16];
-std::memcpy(state, input, 16);
-
-```
-AddRoundKey(state, &keySchedule[40]);
-
-for (int round = 9; round > 0; round--) {
-    InvShiftRows(state);
-    InvSubBytes(state);
-    AddRoundKey(state, &keySchedule[round * 4]);
-    InvMixColumns(state);
+AdvancedCryptoEngine::CryptoContext& AdvancedCryptoEngine::GetContext() {
+static CryptoContext ctx;
+return ctx;
 }
 
-InvShiftRows(state);
-InvSubBytes(state);
-AddRoundKey(state, &keySchedule[0]);
+bool AdvancedCryptoEngine::Initialize(const std::vector<uint8_t>& key128) {
+auto& ctx = GetContext();
+std::lock_guard<std::mutex> lock(ctx.contextMutex);
 
-std::memcpy(output, state, 16);
+```
+if (key128.size() != 16) return false;
+
+ctx.aes = std::make_unique<RealAES128>();
+if (!ctx.aes->Initialize(key128)) {
+    return false;
+}
+
+std::memcpy(ctx.workingKey.data(), key128.data(), 16);
+ctx.operationCounter = 0;
+ctx.initialized = true;
+
+return true;
 ```
 
 }
 
-std::vector<uint8_t> RealAES128::Encrypt(const std::vector<uint8_t>& plaintext) {
-std::lock_guard<std::mutex> lock(cryptoMutex);
+void AdvancedCryptoEngine::Shutdown() {
+auto& ctx = GetContext();
+std::lock_guard<std::mutex> lock(ctx.contextMutex);
 
 ```
-if (!initialized) return plaintext;
-
-size_t paddedSize = ((plaintext.size() + 15) / 16) * 16;
-std::vector<uint8_t> padded(paddedSize);
-std::memcpy(padded.data(), plaintext.data(), plaintext.size());
-
-uint8_t paddingValue = static_cast<uint8_t>(paddedSize - plaintext.size());
-for (size_t i = plaintext.size(); i < paddedSize; i++) {
-    padded[i] = paddingValue;
+if (ctx.aes) {
+    ctx.aes->SecureWipe();
+    ctx.aes.reset();
 }
 
-std::vector<uint8_t> ciphertext(paddedSize);
-
-for (size_t i = 0; i < paddedSize; i += 16) {
-    EncryptBlock(&padded[i], &ciphertext[i]);
-}
-
-return ciphertext;
+SecureWipe(ctx.workingKey.data(), ctx.workingKey.size());
+ctx.initialized = false;
 ```
 
 }
 
-std::vector<uint8_t> RealAES128::Decrypt(const std::vector<uint8_t>& ciphertext) {
-std::lock_guard<std::mutex> lock(cryptoMutex);
+void AdvancedCryptoEngine::ApplyPadding(std::vector<uint8_t>& data) {
+size_t originalSize = data.size();
+size_t paddedSize = ((originalSize + 15) / 16) * 16;
+uint8_t paddingValue = static_cast<uint8_t>(paddedSize - originalSize);
 
 ```
-if (!initialized || ciphertext.size() % 16 != 0) return ciphertext;
+data.resize(paddedSize);
+for (size_t i = originalSize; i < paddedSize; i++) {
+    data[i] = paddingValue;
+}
+```
 
-std::vector<uint8_t> plaintext(ciphertext.size());
-
-for (size_t i = 0; i < ciphertext.size(); i += 16) {
-    DecryptBlock(&ciphertext[i], &plaintext[i]);
 }
 
-if (!plaintext.empty()) {
-    uint8_t paddingValue = plaintext.back();
-    if (paddingValue > 0 && paddingValue <= 16) {
-        plaintext.resize(plaintext.size() - paddingValue);
+void AdvancedCryptoEngine::RemovePadding(std::vector<uint8_t>& data) {
+if (data.empty()) return;
+
+```
+uint8_t paddingValue = data.back();
+if (paddingValue > 0 && paddingValue <= 16 && data.size() >= paddingValue) {
+    data.resize(data.size() - paddingValue);
+}
+```
+
+}
+
+std::vector<uint8_t> AdvancedCryptoEngine::Encrypt(const std::vector<uint8_t>& data, const SecurityContext& ctx) {
+auto& cryptoCtx = GetContext();
+std::lock_guard<std::mutex> lock(cryptoCtx.contextMutex);
+
+```
+if (!cryptoCtx.initialized || !cryptoCtx.aes) return data;
+
+std::vector<uint8_t> contextMixed = data;
+for (size_t i = 0; i < contextMixed.size(); i++) {
+    contextMixed[i] ^= ctx.fingerprint[i % 64];
+}
+
+auto encrypted = cryptoCtx.aes->Encrypt(contextMixed);
+cryptoCtx.operationCounter++;
+
+return encrypted;
+```
+
+}
+
+std::vector<uint8_t> AdvancedCryptoEngine::Decrypt(const std::vector<uint8_t>& data, const SecurityContext& ctx, TitanError& error) {
+auto& cryptoCtx = GetContext();
+std::lock_guard<std::mutex> lock(cryptoCtx.contextMutex);
+
+```
+if (!cryptoCtx.initialized || !cryptoCtx.aes) {
+    error = TitanError::NotInitialized;
+    return data;
+}
+
+auto decrypted = cryptoCtx.aes->Decrypt(data);
+
+for (size_t i = 0; i < decrypted.size(); i++) {
+    decrypted[i] ^= ctx.fingerprint[i % 64];
+}
+
+cryptoCtx.operationCounter++;
+error = TitanError::Success;
+
+return decrypted;
+```
+
+}
+
+std::vector<uint8_t> AdvancedCryptoEngine::DeriveSessionKey(const std::vector<uint8_t>& masterKey, const SecurityContext& ctx) {
+std::vector<uint8_t> material;
+material.insert(material.end(), masterKey.begin(), masterKey.end());
+material.insert(material.end(), ctx.fingerprint.begin(), ctx.fingerprint.end());
+
+```
+for (size_t i = 0; i < ctx.entropy.size(); i++) {
+    uint64_t entropy = ctx.entropy[i];
+    for (int j = 0; j < 8; j++) {
+        material.push_back(static_cast<uint8_t>((entropy >> (j * 8)) & 0xFF));
     }
 }
 
-return plaintext;
+auto hash1 = RealSHA256::Hash(material);
+auto hash2 = RealSHA256::Hash(hash1.data(), hash1.size());
+
+std::vector<uint8_t> derived(16);
+for (size_t i = 0; i < 16; i++) {
+    derived[i] = hash1[i] ^ hash2[i + 16];
+}
+
+return derived;
 ```
 
 }
 
-void RealAES128::SecureWipe() {
-std::lock_guard<std::mutex> lock(cryptoMutex);
+std::vector<uint8_t> AdvancedCryptoEngine::Derive256to128(const std::vector<uint8_t>& key256) {
+if (key256.size() != 32) return {};
 
 ```
-volatile uint32_t* ptr = keySchedule.data();
-for (size_t i = 0; i < keySchedule.size(); i++) {
-    ptr[i] = 0;
+auto hash = RealSHA256::Hash(key256);
+
+std::vector<uint8_t> key128(16);
+for (size_t i = 0; i < 16; i++) {
+    key128[i] = hash[i] ^ hash[i + 16];
 }
 
-initialized = false;
+return key128;
 ```
 
 }
 
+std::vector<uint8_t> AdvancedCryptoEngine::GenerateSecureKey(size_t bits) {
+size_t bytes = bits / 8;
+std::vector<uint8_t> key(bytes);
+
+```
+std::random_device rd;
+std::mt19937_64 gen(rd());
+
+auto now = std::chrono::high_resolution_clock::now();
+uint64_t timestamp = now.time_since_epoch().count();
+gen.seed(gen() ^ timestamp ^ rd());
+```
+
+#ifdef _WIN32
+LARGE_INTEGER perfCounter;
+QueryPerformanceCounter(&perfCounter);
+gen.seed(gen() ^ perfCounter.QuadPart);
+#endif
+
+```
+for (size_t i = 0; i < bytes; i += 8) {
+    uint64_t rand = gen();
+    std::memcpy(key.data() + i, &rand, std::min(size_t(8), bytes - i));
 }
+
+return key;
+```
+
+}
+
+void AdvancedCryptoEngine::SecureWipe(void* data, size_t len) {
+volatile uint8_t* ptr = static_cast<uint8_t*>(data);
+for (size_t i = 0; i < len; i++) {
+ptr[i] = 0xFF;
+ptr[i] = 0x00;
+ptr[i] = 0xAA;
+ptr[i] = 0x55;
+ptr[i] = 0x00;
+}
+
+#ifdef _WIN32
+SecureZeroMemory(data, len);
+#else
+std::memset(data, 0, len);
+#endif
+}
+
+uint64_t AdvancedCryptoEngine::SecureHash(const uint8_t* data, size_t len) {
+return RealSHA256::QuickHash64(data, len);
+}
+
+AntiReverseEngineering::ProtectionState& AntiReverseEngineering::GetState() {
+static ProtectionState state;
+return state;
+}
+
+std::vector<AntiReverseEngineering::MemoryTrap>& AntiReverseEngineering::GetMemoryTraps() {
+static std::vector<MemoryTrap> traps;
+return traps;
+}
+
+AntiReverseEngineering::AntiDebugState& AntiReverseEngineering::GetDebugState() {
+static AntiDebugState state = {};
+return state;
+}
+
+bool AntiReverseEngineering::DetectVirtualMachine() {
+#ifdef _WIN32
+HKEY hKey;
+if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, “SYSTEM\CurrentControlSet\Services\Disk\Enum”, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+char value[256];
+DWORD size = sizeof(value);
+if (RegQueryValueExA(hKey, “0”, NULL, NULL, (LPBYTE)value, &size) == ERROR_SUCCESS) {
+RegCloseKey(hKey);
+if (strstr(value, “vmware”) || strstr(value, “vbox”) || strstr(value, “qemu”)) {
+return true;
+}
+}
+RegCloseKey(hKey);
+}
+#endif
+return false;
+}
+
+bool AntiReverseEngineering::DetectDebuggerAdvanced() {
+#ifdef _WIN32
+if (IsDebuggerPresent()) return true;
+
+```
+BOOL remoteDebugger = FALSE;
+CheckRemoteDebuggerPresent(GetCurrentProcess(), &remoteDebugger);
+if (remoteDebugger) return true;
+```
+
+#elif **linux** || **ANDROID**
+int fd = open(”/proc/self/status”, O_RDONLY);
+if (fd != -1) {
+char buf[1024];
+ssize_t n = read(fd, buf, sizeof(buf) - 1);
+close(fd);
+
+```
+    if (n > 0) {
+        buf[n] = '\0';
+        if (strstr(buf, "TracerPid:")) {
+            char* line = strstr(buf, "TracerPid:");
+            int pid = atoi(line + 10);
+            if (pid != 0) return true;
+        }
+    }
+}
+```
+
+#endif
+return false;
+}
+
+bool AntiReverseEngineering::InitializeProtection() {
+auto& state = GetState();
+std::lock_guard<std::mutex> lock(state.stateMutex);
+
+#ifdef _WIN32
+HMODULE hModule = GetModuleHandleA(NULL);
+MODULEINFO modInfo;
+GetModuleInformation(GetCurrentProcess(), hModule, &modInfo, sizeof(modInfo));
+
+```
+uint8_t* codeStart = reinterpret_cast<uint8_t*>(modInfo.lpBaseOfDll);
+size_t codeSize = modInfo.SizeOfImage;
+
+size_t segmentCount = 16;
+size_t segmentSize = codeSize / segmentCount;
+
+state.codeChecksums.resize(segmentCount);
+for (size_t i = 0; i < segmentCount; i++) {
+    state.codeChecksums[i] = CalculateCodeChecksum(codeStart + i * segmentSize, segmentSize);
+}
+```
+
+#endif
+
+```
+state.lastValidation = std::chrono::steady_clock::now();
+return true;
+```
+
+}
+
+bool AntiReverseEngineering::PerformRuntimeChecks() {
+auto& state = GetState();
+state.checkpointCounter.fetch_add(1);
+
+```
+if (DetectDebuggerAdvanced()) {
+    state.integrityViolation.store(true);
+    return false;
+}
+
+if (state.checkpointCounter.load() % 10 == 0) {
+    if (DetectVirtualMachine()) {
+        state.integrityViolation.store(true);
+        return false;
+    }
+}
+
+return true;
+```
+
+}
+
+bool AntiReverseEngineering::ValidateEnvironment() {
+#ifdef _WIN32
+return true;
+#elif **ANDROID**
+struct stat st;
+return (stat(”/data/data/dream.titan.game”, &st) == 0);
+#else
+return false;
+#endif
+}
+
+void AntiReverseEngineering::RegisterMemoryTrap(void* address, size_t size) {
+auto& traps = GetMemoryTraps();
+
+```
+MemoryTrap trap;
+trap.address = address;
+trap.size = size;
+trap.originalChecksum = CalculateCodeChecksum(address, size);
+trap.active = true;
+trap.violationCount = 0;
+
+traps.push_back(trap);
+```
+
+}
+
+bool AntiReverseEngineering::VerifyMemoryTraps() {
+auto& traps = GetMemoryTraps();
+
+```
+for (auto& trap : traps) {
+    if (!trap.active) continue;
+    
+    uint64_t currentChecksum = CalculateCodeChecksum(trap.address, trap.size);
+    if (currentChecksum != trap.originalChecksum) {
+        trap.violationCount++;
+        return false;
+    }
+}
+
+return true;
+```
+
+}
+
+void AntiReverseEngineering::TriggerAntiTamper() {
+auto& state = GetState();
+state.integrityViolation.store(true);
+
+#ifdef _WIN32
+TerminateProcess(GetCurrentProcess(), 0xDEADC0DE);
+#else
+exit(0xDEADC0DE);
+#endif
+}
+
+uint64_t AntiReverseEngineering::CalculateCodeChecksum(const void* start, size_t len) {
+return RealSHA256::QuickHash64(static_cast<const uint8_t*>(start), len);
+}
+
+uint32_t AntiReverseEngineering::GetDetectionScore() {
+return GetState().detectionScore.load();
+}
+
+std::map<void*, SecureMemoryManager::SecureBlock>& SecureMemoryManager::GetSecureBlocks() {
+static std::map<void*, SecureBlock> blocks;
+return blocks;
+}
+
+std::mutex& SecureMemoryManager::GetMemoryMutex() {
+static std::mutex mutex;
+return mutex;
+}
+
+void* SecureMemoryManager::AllocateSecure(size_t size) {
+void* ptr = malloc(size);
+if (!ptr) return nullptr;
+
+```
+auto& blocks = GetSecureBlocks();
+std::lock_guard<std::mutex> lock(GetMemoryMutex());
+
+SecureBlock block;
+block.address = ptr;
+block.size = size;
+block.checksum = RealSHA256::QuickHash64(static_cast<uint8_t*>(ptr), size);
+block.encrypted = false;
+block.locked = false;
+block.lastAccess = std::chrono::steady_clock::now().time_since_epoch().count();
+block.accessCount = 0;
+
+blocks[ptr] = block;
+
+return ptr;
+```
+
+}
+
+void SecureMemoryManager::FreeSecure(void* ptr) {
+if (!ptr) return;
+
+```
+auto& blocks = GetSecureBlocks();
+std::lock_guard<std::mutex> lock(GetMemoryMutex());
+
+auto it = blocks.find(ptr);
+if (it != blocks.end()) {
+    WipeMemory(ptr, it->second.size);
+    blocks.erase(it);
+}
+
+free(ptr);
+```
+
+}
+
+void SecureMemoryManager::WipeMemory(void* ptr, size_t size) {
+AdvancedCryptoEngine::SecureWipe(ptr, size);
+}
+
+TitanShieldCore::TitanShieldCore()
+: initialized_(false), validated_(false), sessionToken_(0),
+operationCounter_(0), monitoringActive_(false),
+protectionLevel_(ProtectionLevel::Enhanced), sessionTimeout_(3600000),
+lastError_(TitanError::Success) {
+}
+
+TitanShieldCore::~TitanShieldCore() {
+Shutdown();
+}
+
+TitanShieldCore& TitanShieldCore::GetInstance() {
+static TitanShieldCore instance;
+return instance;
+}
+
+bool TitanShieldCore::ExtractEmbeddedKey() {
+std::vector<uint8_t> key256;
+
+```
+if (!KeyFragmentExtractor::ExtractAndAssembleKey(key256)) {
+    lastError_ = TitanError::KeyFragmentMissing;
+    return false;
+}
+
+masterKey_ = AdvancedCryptoEngine::Derive256to128(key256);
+AdvancedCryptoEngine::SecureWipe(key256.data(), key256.size());
+
+if (masterKey_.size() != 16) {
+    lastError_ = TitanError::InvalidKey;
+    return false;
+}
+
+return true;
+```
+
+}
+
+bool TitanShieldCore::BuildSecurityContext() {
+#ifdef *WIN32
+securityContext*.processId = GetCurrentProcessId();
+securityContext_.threadId = GetCurrentThreadId();
+#else
+securityContext_.processId = getpid();
+securityContext_.threadId = 0;
+#endif
+
+```
+securityContext_.timestamp = std::chrono::system_clock::now().time_since_epoch().count();
+
+std::random_device rd;
+std::mt19937_64 gen(rd());
+for (size_t i = 0; i < securityContext_.entropy.size(); i++) {
+    securityContext_.entropy[i] = gen();
+}
+
+auto fingerprintData = AdvancedCryptoEngine::GenerateSecureKey(512);
+std::memcpy(securityContext_.fingerprint.data(), fingerprintData.data(), 64);
+
+securityContext_.validUntil = securityContext_.timestamp + sessionTimeout_;
+securityContext_.validated = true;
+securityContext_.securityLevel = static_cast<uint32_t>(protectionLevel_);
+
+return true;
+```
+
+}
+
+bool TitanShieldCore::EstablishSecureSession() {
+sessionKey_ = AdvancedCryptoEngine::DeriveSessionKey(masterKey_, securityContext_);
+
+```
+if (!AdvancedCryptoEngine::Initialize(sessionKey_)) {
+    lastError_ = TitanError::NotInitialized;
+    return false;
+}
+
+sessionToken_ = RealSHA256::QuickHash64(sessionKey_.data(), sessionKey_.size());
+sessionStart_ = std::chrono::steady_clock::now();
+    
+    return true;
+}
+
+void TitanShieldCore::StartContinuousMonitoring() {
+    monitoringActive_ = true;
+    monitoringThread_ = std::thread(&TitanShieldCore::MonitoringLoop, this);
+}
+
+void TitanShieldCore::MonitoringLoop() {
+    while (monitoringActive_) {
+        if (!AntiReverseEngineering::PerformRuntimeChecks()) {
+            AntiReverseEngineering::TriggerAntiTamper();
+        }
+        
+        if (!AntiReverseEngineering::VerifyMemoryTraps()) {
+            AntiReverseEngineering::TriggerAntiTamper();
+        }
+        
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+}
+
+bool TitanShieldCore::Initialize(ProtectionLevel::Level level) {
+    if (initialized_) return true;
+    
+    protectionLevel_ = level;
+    
+    if (!AntiReverseEngineering::ValidateEnvironment()) {
+        lastError_ = TitanError::VMDetected;
+        return false;
+    }
+    
+    if (!AntiReverseEngineering::InitializeProtection()) {
+        lastError_ = TitanError::NotInitialized;
+        return false;
+    }
+    
+    if (!ExtractEmbeddedKey()) {
+        return false;
+    }
+    
+    if (!BuildSecurityContext()) {
+        lastError_ = TitanError::InvalidContext;
+        return false;
+    }
+    
+    if (!EstablishSecureSession()) {
+        return false;
+    }
+    
+    StartContinuousMonitoring();
+    
+    initialized_ = true;
+    validated_ = true;
+    
+    return true;
+}
+
+bool TitanShieldCore::Validate() {
+    if (!initialized_) return false;
+    return validated_ && AntiReverseEngineering::PerformRuntimeChecks();
+}
+
+bool TitanShieldCore::Shutdown() {
+    monitoringActive_ = false;
+    if (monitoringThread_.joinable()) {
+        monitoringThread_.join();
+    }
+    
+    AdvancedCryptoEngine::Shutdown();
+    AdvancedCryptoEngine::SecureWipe(masterKey_.data(), masterKey_.size());
+    AdvancedCryptoEngine::SecureWipe(sessionKey_.data(), sessionKey_.size());
+    
+    initialized_ = false;
+    validated_ = false;
+    
+    return true;
+}
+
+bool TitanShieldCore::IsProtected() const {
+    return initialized_ && validated_;
+}
+
+const std::vector<uint8_t>& TitanShieldCore::GetMasterKey() const {
+    return masterKey_;
+}
+
+const std::vector<uint8_t>& TitanShieldCore::GetSessionKey() const {
+    return sessionKey_;
+}
+
+const SecurityContext& TitanShieldCore::GetSecurityContext() const {
+    return securityContext_;
+}
+
+uint64_t TitanShieldCore::GetSessionToken() const {
+    return sessionToken_;
+}
+
+TitanError TitanShieldCore::GetLastError() const {
+    return lastError_;
+}
+
+bool Initialize(ProtectionLevel::Level level) {
+    return TitanShieldCore::GetInstance().Initialize(level);
+}
+
+bool Validate() {
+    return TitanShieldCore::GetInstance().Validate();
+}
+
+bool Shutdown() {
+    return TitanShieldCore::GetInstance().Shutdown();
+}
+
+std::vector<uint8_t> Encrypt(const std::vector<uint8_t>& data) {
+    auto& core = TitanShieldCore::GetInstance();
+    if (!core.IsProtected()) return data;
+    
+    TitanError error;
+    return AdvancedCryptoEngine::Encrypt(data, core.GetSecurityContext());
+}
+
+std::vector<uint8_t> Decrypt(const std::vector<uint8_t>& data) {
+    auto& core = TitanShieldCore::GetInstance();
+    if (!core.IsProtected()) return data;
+    
+    TitanError error;
+    return AdvancedCryptoEngine::Decrypt(data, core.GetSecurityContext(), error);
+}
+
+std::string ProtectString(const std::string& str) {
+    std::vector<uint8_t> data(str.begin(), str.end());
+    auto encrypted = Encrypt(data);
+    return std::string(encrypted.begin(), encrypted.end());
+}
+
+std::string UnprotectString(const std::string& str) {
+    std::vector<uint8_t> data(str.begin(), str.end());
+    auto decrypted = Decrypt(data);
+    return std::string(decrypted.begin(), decrypted.end());
+}
+
+void* SecureAlloc(size_t size) {
+    return SecureMemoryManager::AllocateSecure(size);
+}
+
+void SecureFree(void* ptr) {
+    SecureMemoryManager::FreeSecure(ptr);
+}
+
+void RegisterCriticalMemory(void* address, size_t size) {
+    AntiReverseEngineering::RegisterMemoryTrap(address, size);
+}
+
+bool PerformIntegrityCheck() {
+    return AntiReverseEngineering::PerformRuntimeChecks();
+}
+
+bool ValidateEnvironment() {
+    return AntiReverseEngineering::ValidateEnvironment();
+}
+
+bool IsProtected() {
+    return TitanShieldCore::GetInstance().IsProtected();
+}
+
+TitanError GetLastError() {
+    return TitanShieldCore::GetInstance().GetLastError();
+}
+
+std::string GetErrorString(TitanError error) {
+    switch (error) {
+        case TitanError::Success: return "Success";
+        case TitanError::NotInitialized: return "Not initialized";
+        case TitanError::InvalidKey: return "Invalid key";
+        case TitanError::InvalidContext: return "Invalid context";
+        case TitanError::TamperDetected: return "Tamper detected";
+        case TitanError::DebuggerDetected: return "Debugger detected";
+        case TitanError::VMDetected: return "Virtual machine detected";
+        case TitanError::IntegrityViolation: return "Integrity violation";
+        case TitanError::DecryptionFailed: return "Decryption failed";
+        case TitanError::MemoryCorruption: return "Memory corruption";
+        case TitanError::KeyFragmentMissing: return "Key fragment missing";
+        case TitanError::ChecksumMismatch: return "Checksum mismatch";
+        default: return "Unknown error";
+    }
+}
+
+uint32_t GetThreatLevel() {
+    return AntiReverseEngineering::GetDetectionScore();
+}
+
+SecurityContext CreateSecurityContext() {
+    return TitanShieldCore::GetInstance().GetSecurityContext();
+}
+
+bool ValidateSecurityContext(const SecurityContext& ctx) {
+    if (!ctx.validated) return false;
+    
+#ifdef _WIN32
+    if (ctx.processId != GetCurrentProcessId()) return false;
+#else
+    if (ctx.processId != getpid()) return false;
+#endif
+    
+    auto now = std::chrono::system_clock::now().time_since_epoch().count();
+    if (static_cast<uint64_t>(now) > ctx.validUntil) return false;
+    
+    return true;
+}
+
+}
+Start_ = std::chrono::steady_clock::now();
+    
+    return true;
+}
+
+void TitanShieldCore::StartContinuousMonitoring() {
+    monitoringActive_ = true;
+    monitoringThread_ = std::thread(&TitanShieldCore::MonitoringLoop, this);
+}
+
+void TitanShieldCore::MonitoringLoop() {
+    while (monitoringActive_) {
+        if (!AntiReverseEngineering::PerformRuntimeChecks()) {
+            AntiReverseEngineering::TriggerAntiTamper();
+        }
+        
+        if (!AntiReverseEngineering::VerifyMemoryTraps()) {
+            AntiReverseEngineering::TriggerAntiTamper();
+        }
+        
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+}
+
+bool TitanShieldCore::Initialize(ProtectionLevel::Level level) {
+    if (initialized_) return true;
+    
+    protectionLevel_ = level;
+    
+    if (!AntiReverseEngineering::ValidateEnvironment()) {
+        lastError_ = TitanError::VMDetected;
+        return false;
+    }
+    
+    if (!AntiReverseEngineering::InitializeProtection()) {
+        lastError_ = TitanError::NotInitialized;
+        return false;
+    }
+    
+    if (!ExtractEmbeddedKey()) {
+        return false;
+    }
+    
+    if (!BuildSecurityContext()) {
+        lastError_ = TitanError::InvalidContext;
+        return false;
+    }
+    
+    if (!EstablishSecureSession()) {
+        return false;
+    }
+    
+    StartContinuousMonitoring();
+    
+    initialized_ = true;
+    validated_ = true;
+    
+    return true;
+}
+
+bool TitanShieldCore::Validate() {
+    if (!initialized_) return false;
+    return validated_ && AntiReverseEngineering::PerformRuntimeChecks();
+}
+
+bool TitanShieldCore::Shutdown() {
+    monitoringActive_ = false;
+    if (monitoringThread_.joinable()) {
+        monitoringThread_.join();
+    }
+    
+    AdvancedCryptoEngine::Shutdown();
+    AdvancedCryptoEngine::SecureWipe(masterKey_.data(), masterKey_.size());
+    AdvancedCryptoEngine::SecureWipe(sessionKey_.data(), sessionKey_.size());
+    
+    initialized_ = false;
+    validated_ = false;
+    
+    return true;
+}
+
+bool TitanShieldCore::IsProtected() const {
+    return initialized_ && validated_;
+}
+
+const std::vector<uint8_t>& TitanShieldCore::GetMasterKey() const {
+    return masterKey_;
+}
+
+const std::vector<uint8_t>& TitanShieldCore::GetSessionKey() const {
+    return sessionKey_;
+}
+
+const SecurityContext& TitanShieldCore::GetSecurityContext() const {
+    return securityContext_;
+}
+
+uint64_t TitanShieldCore::GetSessionToken() const {
+    return sessionToken_;
+}
+
+TitanError TitanShieldCore::GetLastError() const {
+    return lastError_;
+}
+
+bool Initialize(ProtectionLevel::Level level) {
+    return TitanShieldCore::GetInstance().Initialize(level);
+}
+
+bool Validate() {
+    return TitanShieldCore::GetInstance().Validate();
+}
+
+bool Shutdown() {
+    return TitanShieldCore::GetInstance().Shutdown();
+}
+
+std::vector<uint8_t> Encrypt(const std::vector<uint8_t>& data) {
+    auto& core = TitanShieldCore::GetInstance();
+    if (!core.IsProtected()) return data;
+    
+    TitanError error;
+    return AdvancedCryptoEngine::Encrypt(data, core.GetSecurityContext());
+}
+
+std::vector<uint8_t> Decrypt(const std::vector<uint8_t>& data) {
+    auto& core = TitanShieldCore::GetInstance();
+    if (!core.IsProtected()) return data;
+    
+    TitanError error;
+    return AdvancedCryptoEngine::Decrypt(data, core.GetSecurityContext(), error);
+}
+
+std::string ProtectString(const std::string& str) {
+    std::vector<uint8_t> data(str.begin(), str.end());
+    auto encrypted = Encrypt(data);
+    return std::string(encrypted.begin(), encrypted.end());
+}
+
+std::string UnprotectString(const std::string& str) {
+    std::vector<uint8_t> data(str.begin(), str.end());
+    auto decrypted = Decrypt(data);
+    return std::string(decrypted.begin(), decrypted.end());
+}
+
+void* SecureAlloc(size_t size) {
+    return SecureMemoryManager::AllocateSecure(size);
+}
+
+void SecureFree(void* ptr) {
+    SecureMemoryManager::FreeSecure(ptr);
+}
+
+void RegisterCriticalMemory(void* address, size_t size) {
+    AntiReverseEngineering::RegisterMemoryTrap(address, size);
+}
+
+bool PerformIntegrityCheck() {
+    return AntiReverseEngineering::PerformRuntimeChecks();
+}
+
+bool ValidateEnvironment() {
+    return AntiReverseEngineering::ValidateEnvironment();
+}
+
+bool IsProtected() {
+    return TitanShieldCore::GetInstance().IsProtected();
+}
+
+TitanError GetLastError() {
+    return TitanShieldCore::GetInstance().GetLastError();
+}
+
+std::string GetErrorString(TitanError error) {
+    switch (error) {
+        case TitanError::Success: return "Success";
+        case TitanError::NotInitialized: return "Not initialized";
+        case TitanError::InvalidKey: return "Invalid key";
+        case TitanError::InvalidContext: return "Invalid context";
+        case TitanError::TamperDetected: return "Tamper detected";
+        case TitanError::DebuggerDetected: return "Debugger detected";
+        case TitanError::VMDetected: return "Virtual machine detected";
+        case TitanError::IntegrityViolation: return "Integrity violation";
+        case TitanError::DecryptionFailed: return "Decryption failed";
+        case TitanError::MemoryCorruption: return "Memory corruption";
+        case TitanError::KeyFragmentMissing: return "Key fragment missing";
+        case TitanError::ChecksumMismatch: return "Checksum mismatch";
+        default: return "Unknown error";
+    }
+}
+
+uint32_t GetThreatLevel() {
+    return AntiReverseEngineering::GetDetectionScore();
+}
+
+SecurityContext CreateSecurityContext() {
+    return TitanShieldCore::GetInstance().GetSecurityContext();
+}
+
+bool ValidateSecurityContext(const SecurityContext& ctx) {
+    if (!ctx.validated) return false;
+    
+#ifdef _WIN32
+    if (ctx.processId != GetCurrentProcessId()) return false;
+#else
+    if (ctx.processId != getpid()) return false;
+#endif
+    
+    auto now = std::chrono::system_clock::now().time_since_epoch().count();
+    if (static_cast<uint64_t>(now) > ctx.validUntil) return false;
+    
+    return true;
+}
+
+}
+
