@@ -1,173 +1,161 @@
-#include "Platform/Window.hpp"
-#include "Graphics/GraphicsDevice.hpp"
-#include "Scene/SceneManager.hpp"
-#include "Scene/SceneSerializer.hpp"
-#include "ECS/World.hpp"
-#include "ECS/Components/Transform.hpp"
-#include "ECS/Components/Sprite.hpp"
-#include "Core/Systems/RenderEntitySystem.hpp"
-#include "Input/InputManager.hpp"
-#include "Input/Joystick.hpp"
-#include "Debug/Debug.hpp"
-#include <chrono>
+#include "Engine.hpp"
+#include <iostream>
 #include <thread>
-#include <memory>
-#include <string>
+#include <chrono>
+#include <cassert>
 
-extern "C" void RenderEntitySystem_SetSceneManager(Titan::Scene::SceneManager* m);
+using namespace Engine;
+
+struct QuickTestSystem : public SystemManager::ISystem {
+    int updates = 0;
+    int fixeds = 0;
+    int renders = 0;
+    int stopAfterUpdates = 120;
+    void OnInit() override {
+        std::cout << "[QuickTestSystem] OnInit\n";
+    }
+    void Update(float dt) override {
+        ++updates;
+        if ((updates % 30) == 0) std::cout << "[QuickTestSystem] Update " << updates << " dt=" << dt << "\n";
+        if (updates >= stopAfterUpdates) EngineCore::RequestQuit();
+    }
+    void FixedUpdate(float dt) override {
+        ++fixeds;
+        if ((fixeds % 60) == 0) std::cout << "[QuickTestSystem] FixedUpdate " << fixeds << " fd=" << dt << "\n";
+    }
+    void Render() override {
+        ++renders;
+        if ((renders % 60) == 0) std::cout << "[QuickTestSystem] Render " << renders << "\n";
+    }
+    void Shutdown() override {
+        std::cout << "[QuickTestSystem] Shutdown\n";
+    }
+};
+
+struct DirectSystem : public SystemManager::ISystem {
+    void OnInit() override { std::cout << "[DirectSystem] OnInit\n"; }
+    void Update(float dt) override { std::cout << "[DirectSystem] Update dt=" << dt << "\n"; }
+    void FixedUpdate(float dt) override { std::cout << "[DirectSystem] FixedUpdate dt=" << dt << "\n"; }
+    void Render() override { std::cout << "[DirectSystem] Render\n"; }
+    void Shutdown() override { std::cout << "[DirectSystem] Shutdown\n"; }
+};
 
 int main() {
-    if (!Titan::Platform::Window::Create(1280, 720, "Titan - Test Game")) return -1;
-    if (!Titan::Graphics::Device::Init(Titan::Platform::Window::GetHWND(), Titan::Platform::Window::GetHDC())) {
-        Titan::Platform::Window::Destroy();
-        return -1;
+    EngineConfig cfg;
+    cfg.width = 640;
+    cfg.height = 480;
+    cfg.title = "TitanEngine Full Test";
+    cfg.fixedStep = 1.0f / 60.0f;
+    cfg.maxFixedStepsPerFrame = 4;
+    cfg.targetFps = 60;
+    cfg.workerThreads = 2;
+    cfg.autoShutdown = false;
+
+    std::cout << "[Test] Calling Time::Init and Input::Manager::Init before engine init\n";
+    Time::Init();
+    Input::Manager::Init();
+
+    std::cout << "[Test] EngineCore::Init\n";
+    EngineCore::Init(cfg);
+
+    std::cout << "[Test] Query config and steps\n";
+    const EngineConfig& rcfg = EngineCore::GetConfig();
+    assert(rcfg.width == cfg.width);
+    std::cout << "[Test] FixedStep = " << EngineCore::GetFixedStep() << "\n";
+
+    std::cout << "[Test] Registering callbacks\n";
+    EngineCore::RegisterFixedStepCallback([](float dt){
+        static int c = 0;
+        if (++c % 120 == 0) std::cout << "[CB] Fixed callback count=" << c << " dt=" << dt << "\n";
+    });
+    EngineCore::RegisterUpdateCallback([](float dt){
+        static int u = 0;
+        if (++u % 120 == 0) std::cout << "[CB] Update callback count=" << u << " dt=" << dt << "\n";
+    });
+    EngineCore::RegisterShutdownCallback([](){
+        std::cout << "[CB] Shutdown callback fired\n";
+    });
+
+    std::cout << "[Test] Direct calls to subsystem APIs\n";
+    SystemManager::Init();
+    SystemManager::RegisterSystem(std::make_unique<DirectSystem>(), 10);
+    SystemManager::UpdateAll(1.0f/60.0f);
+    SystemManager::FixedUpdateAll(1.0f/60.0f);
+    SystemManager::RenderAll();
+
+    Graphics::Renderer::BeginFrame();
+    Graphics::Renderer::EndFrame();
+    Graphics::Renderer::Present();
+
+    Scene::SceneManager::Init();
+    Scene::SceneManager::LoadAsync("test_scene");
+    Scene::SceneManager::Activate("test_scene");
+    Scene::SceneManager::UpdateActive(1.0f/60.0f);
+    Scene::SceneManager::RenderActive();
+
+    Physics::PhysicsSystem::Step(1.0f/60.0f);
+
+    std::cout << "[Test] Enqueue background task\n";
+    EngineCore::EnqueueBackgroundTask([](){
+        std::cout << "[BG] background work start\n";
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        std::cout << "[BG] background work done\n";
+    });
+
+    std::cout << "[Test] Enqueue main-thread task\n";
+    EngineCore::EnqueueMainThreadTask([](){
+        std::cout << "[MainTask] main thread task executed\n";
+    });
+
+    std::cout << "[Test] Registering systems through EngineCore\n";
+    EngineCore::RegisterSystem(std::make_unique<QuickTestSystem>(), 0);
+
+    std::cout << "[Test] Also register a system directly with SystemManager\n";
+    SystemManager::RegisterSystem(std::make_unique<DirectSystem>(), 5);
+
+    std::cout << "[Test] Start engine in separate thread\n";
+    std::thread engineThread([](){ EngineCore::Run(); });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    std::cout << "[Test] While engine running: enqueue several main and bg tasks\n";
+    for (int i = 0; i < 5; ++i) {
+        EngineCore::EnqueueBackgroundTask([i]() {
+            std::cout << "[BG] task " << i << " running\n";
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::cout << "[BG] task " << i << " done\n";
+        });
+        EngineCore::EnqueueMainThreadTask([i]() {
+            std::cout << "[Main] task " << i << " executed on main thread\n";
+        });
     }
 
-    Titan::Debug::Init();
+    std::cout << "[Test] Wait for background tasks to finish\n";
+    EngineCore::WaitForBackgroundTasks();
+    std::cout << "[Test] Background tasks completed\n";
 
-    auto sceneManager = std::make_unique<Titan::Scene::SceneManager>();
-    RenderEntitySystem_SetSceneManager(sceneManager.get());
-    auto scene = sceneManager->CreateScene("test");
-    sceneManager->ActivateScene("test");
+    std::cout << "[Test] Sleep briefly to let engine loop progress\n";
+    std::this_thread::sleep_for(std::chrono::seconds(3));
 
-    auto ePlayer = scene->world->CreateEntity();
-    Titan::ECS::Components::Transform pt;
-    pt.x = 640; pt.y = 360; pt.sx = 1.0f; pt.sy = 1.0f; pt.rot = 0.0f;
-    scene->world->transforms.emplace(ePlayer, pt);
-    Titan::ECS::Components::Sprite ps;
-    ps.path = "assets/player.png";
-    scene->world->sprites.emplace(ePlayer, ps);
+    std::cout << "[Test] RequestQuit from test harness\n";
+    EngineCore::RequestQuit();
 
-    auto eEnemy = scene->world->CreateEntity();
-    Titan::ECS::Components::Transform et;
-    et.x = 300; et.y = 200; et.sx = 1.0f; et.sy = 1.0f; et.rot = 0.0f;
-    scene->world->transforms.emplace(eEnemy, et);
-    Titan::ECS::Components::Sprite es;
-    es.path = "assets/enemy.png";
-    scene->world->sprites.emplace(eEnemy, es);
+    if (engineThread.joinable()) engineThread.join();
+    std::cout << "[Test] Engine thread joined\n";
 
-    Titan::Core::Systems::RenderEntitySystem renderSystem;
+    std::cout << "[Test] Call subsystems shutdown paths explicitly\n";
+    SystemManager::Shutdown();
+    Scene::SceneManager::Shutdown();
+    Graphics::Renderer::Shutdown();
+    Platform::Window::Destroy();
 
-    auto& vj = Titan::Input::Joystick::GetVirtual();
-    if (Titan::Platform::Window::IsAndroid()) vj.SetEnabled(true);
-    else vj.SetEnabled(false);
+    std::cout << "[Test] Final EngineCore::Shutdown\n";
+    EngineCore::Shutdown();
 
-    auto last = std::chrono::high_resolution_clock::now();
-    int fpsCounter = 0;
-    float fpsTimer = 0.0f;
-    int fps = 0;
+    std::cout << "[Test] Verifying ShouldQuit and last delta\n";
+    std::cout << "[Test] ShouldQuit()=" << (EngineCore::ShouldQuit() ? "true" : "false") << "\n";
+    std::cout << "[Test] LastDelta=" << EngineCore::GetLastDelta() << "\n";
 
-    while (!Titan::Platform::Window::ShouldClose()) {
-        Titan::Platform::Window::PollEvents();
-
-        Titan::Input::Joystick::Update();
-
-        bool mouseDown = Titan::Input::Manager::IsKeyDown(VK_LBUTTON);
-        int mx = Titan::Input::Manager::GetMouseX();
-        int my = Titan::Input::Manager::GetMouseY();
-        if (mouseDown && !vj.enabled) {
-            // simulate a virtual touch for testing with mouse even if virtual joystick disabled
-            Titan::Input::Joystick::SimulateVirtualTouchDown((float)mx, (float)my);
-        } else if (mouseDown && vj.enabled) {
-            Titan::Input::Joystick::SimulateVirtualTouchMove((float)mx, (float)my);
-        } else {
-            Titan::Input::Joystick::SimulateVirtualTouchUp();
-        }
-
-        auto now = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<float> dt = now - last;
-        last = now;
-        float delta = dt.count();
-
-        fpsTimer += delta;
-        fpsCounter++;
-        if (fpsTimer >= 1.0f) {
-            fps = fpsCounter;
-            fpsCounter = 0;
-            fpsTimer -= 1.0f;
-        }
-
-        if (Titan::Input::Manager::IsKeyPressed('J')) {
-            vj.SetEnabled(!vj.enabled);
-        }
-        if (Titan::Input::Manager::IsKeyPressed('K')) {
-            vj.SetRadius(vj.radius + 8.0f);
-        }
-        if (Titan::Input::Manager::IsKeyPressed('L')) {
-            vj.SetRadius(std::max(8.0f, vj.radius - 8.0f));
-        }
-        if (Titan::Input::Manager::IsKeyPressed(VK_ESCAPE)) break;
-
-        float ax = 0.0f;
-        float ay = 0.0f;
-        if (Titan::Input::Joystick::IsControllerConnected(0)) {
-            ax = Titan::Input::Joystick::GetLeftAxisX(0);
-            ay = -Titan::Input::Joystick::GetLeftAxisY(0);
-        } else if (vj.enabled) {
-            ax = vj.stickX;
-            ay = -vj.stickY;
-        } else {
-            if (Titan::Input::Manager::IsKeyDown(0x25)) ax -= 1.0f;
-            if (Titan::Input::Manager::IsKeyDown(0x27)) ax += 1.0f;
-            if (Titan::Input::Manager::IsKeyDown(0x26)) ay -= 1.0f;
-            if (Titan::Input::Manager::IsKeyDown(0x28)) ay += 1.0f;
-        }
-
-        float speed = 320.0f;
-        auto &ptref = scene->world->transforms[ePlayer];
-        ptref.x += ax * speed * delta;
-        ptref.y += ay * speed * delta;
-
-        if (Titan::Input::Joystick::IsControllerConnected(0)) {
-            auto cs = Titan::Input::Joystick::GetController(0);
-            if (cs.buttons) {
-                // placeholder: if any button pressed, toggle enemy visibility by moving it
-                scene->world->transforms[eEnemy].x = 400 + (cs.buttons % 64);
-            }
-        }
-
-        scene->world->transforms[eEnemy].rot += 90.0f * delta;
-
-        Titan::Debug::Begin();
-
-        char buf[128];
-        sprintf(buf, "FPS: %d", fps);
-        Titan::Debug::Text(10, 18, buf);
-
-        sprintf(buf, "Virtual J: %s  Radius: %.1f", vj.enabled ? "ON" : "OFF", vj.radius);
-        Titan::Debug::Text(10, 36, buf);
-
-        sprintf(buf, "Joystick AX: %.2f AY: %.2f", ax, ay);
-        Titan::Debug::Text(10, 54, buf);
-
-        if (Titan::Debug::Button(10, 80, 180, 28, vj.enabled ? "Disable Virtual Joy" : "Enable Virtual Joy")) {
-            vj.SetEnabled(!vj.enabled);
-        }
-        if (Titan::Debug::Button(10, 116, 140, 28, "Increase Radius")) {
-            vj.SetRadius(vj.radius + 8.0f);
-        }
-        if (Titan::Debug::Button(160, 116, 140, 28, "Decrease Radius")) {
-            vj.SetRadius(std::max(8.0f, vj.radius - 8.0f));
-        }
-
-        Titan::Debug::End();
-
-        Titan::Core::FrameContext fc;
-        fc.dt = delta;
-        fc.engine = nullptr;
-
-        renderSystem.Update(fc);
-
-        Titan::Platform::Window::SwapBuffers();
-
-        Titan::Input::Manager::EndFrame();
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-
-    Titan::Debug::Shutdown();
-    Titan::Graphics::Device::Shutdown();
-    Titan::Platform::Window::Destroy();
-
+    std::cout << "[Test] All tests finished\n";
     return 0;
 }
