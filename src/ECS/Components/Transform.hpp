@@ -111,6 +111,22 @@ float w = 1.0f;
 Quaternion() = default;
 Quaternion(float x, float y, float z, float w) : x(x), y(y), z(z), w(w) {}
 
+Quaternion operator*(const Quaternion& other) const {
+    return Quaternion(
+        w * other.x + x * other.w + y * other.z - z * other.y,
+        w * other.y - x * other.z + y * other.w + z * other.x,
+        w * other.z + x * other.y - y * other.x + z * other.w,
+        w * other.w - x * other.x - y * other.y - z * other.z
+    );
+}
+
+Vec3 operator*(const Vec3& v) const {
+    Vec3 qv(x, y, z);
+    Vec3 uv = qv.Cross(v);
+    Vec3 uuv = qv.Cross(uv);
+    return v + (uv * (2.0f * w)) + (uuv * 2.0f);
+}
+
 static Quaternion Identity() {
     return Quaternion(0, 0, 0, 1);
 }
@@ -140,7 +156,7 @@ Vec3 ToEuler() const {
     
     float sinp = 2.0f * (w * y - z * x);
     if (std::abs(sinp) >= 1.0f)
-        euler.y = std::copysign(3.14159265f / 2.0f, sinp);
+        euler.y = std::copysign(3.14159265358979323846f / 2.0f, sinp);
     else
         euler.y = std::asin(sinp);
     
@@ -149,6 +165,22 @@ Vec3 ToEuler() const {
     euler.z = std::atan2(siny_cosp, cosy_cosp);
     
     return euler;
+}
+
+Quaternion Conjugate() const {
+    return Quaternion(-x, -y, -z, w);
+}
+
+float Length() const {
+    return std::sqrt(x * x + y * y + z * z + w * w);
+}
+
+Quaternion Normalized() const {
+    float len = Length();
+    if (len > 0.0f) {
+        return Quaternion(x / len, y / len, z / len, w / len);
+    }
+    return Identity();
 }
 ```
 
@@ -175,7 +207,7 @@ void Translate(const Vec3& delta) {
 }
 
 void Rotate(const Quaternion& delta) {
-    rotation = delta;
+    rotation = rotation * delta;
 }
 
 void Scale(const Vec3& delta) {
@@ -185,15 +217,15 @@ void Scale(const Vec3& delta) {
 }
 
 Vec3 Forward() const {
-    return Vec3::Forward();
+    return rotation * Vec3::Forward();
 }
 
 Vec3 Right() const {
-    return Vec3::Right();
+    return rotation * Vec3::Right();
 }
 
 Vec3 Up() const {
-    return Vec3::Up();
+    return rotation * Vec3::Up();
 }
 ```
 
