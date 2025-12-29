@@ -20,6 +20,8 @@
 #include <windows.h>
 #include <psapi.h>
 #include <winternl.h>
+//#include <ContextAwareKey.h>
+//#include <SilentCorruption.h>
 #pragma comment(lib, "ntdll.lib")
 #else
 #include <unistd.h>
