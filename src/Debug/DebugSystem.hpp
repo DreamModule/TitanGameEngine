@@ -25,6 +25,8 @@ Color borderColor{0.4f, 0.4f, 0.4f, 1.0f};
 Color logInfo{0.7f, 0.7f, 0.7f, 1.0f};
 Color logWarning{1.0f, 0.8f, 0.2f, 1.0f};
 Color logError{1.0f, 0.3f, 0.3f, 1.0f};
+Color inputActive{0.3f, 0.9f, 0.3f, 1.0f};
+Color inputInactive{0.3f, 0.3f, 0.3f, 1.0f};
 
 int fontSize = 16;
 int padding = 6;
@@ -51,6 +53,7 @@ void LogWarning(const char* format, …);
 void LogError(const char* format, …);
 const std::vector<LogEntry>& GetLogs();
 void ClearLogs();
+void ExportLogsToFile(const char* filename);
 
 class ScopedTimer {
 public:
@@ -85,6 +88,7 @@ bool visible;
 bool draggable;
 bool collapsible;
 bool collapsed;
+int scrollOffset;
 std::function<void()> renderCallback;
 };
 
@@ -102,7 +106,8 @@ void Line(int x1, int y1, int x2, int y2, float r, float g, float b, float a);
 bool Button(int x, int y, int w, int h, const char* text);
 bool Checkbox(int x, int y, const char* label, bool* value);
 bool Slider(int x, int y, int w, const char* label, float* value, float min, float max);
-void Graph(int x, int y, int w, int h, const float* values, int count, float min, float max);
+void Graph(int x, int y, int w, int h, const float* values, int count, float min, float max, const char* label = nullptr);
+bool TextInput(int x, int y, int w, const char* label, char* buffer, size_t bufferSize);
 
 void Init();
 void Shutdown();
@@ -115,14 +120,25 @@ const Style& GetStyle();
 void ShowStatsWindow(bool show);
 void ShowLogWindow(bool show);
 void ShowProfilerWindow(bool show);
+void ShowInputWindow(bool show);
+void ShowConsoleWindow(bool show);
+void ShowPerformanceOverlay(bool show);
 
 bool IsVisible();
 void SetVisible(bool visible);
+
+void TakeScreenshot(const char* filename);
+
+void SaveSettings(const char* filename);
+void LoadSettings(const char* filename);
 
 namespace Internal {
 void RenderStatsWindow();
 void RenderLogWindow();
 void RenderProfilerWindow();
+void RenderInputWindow();
+void RenderConsoleWindow();
+void RenderPerformanceOverlay();
 }
 
 }
