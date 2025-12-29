@@ -1,5 +1,5 @@
 // FIX #1 CORRECTED: Rolling Encryption (key re-encrypts on context change)
-
+//NOT LATEST VERSION. USE ONLY ContextAwareKey.h!!
 #ifndef TITAN_CONTEXT_AWARE_KEY_H
 #define TITAN_CONTEXT_AWARE_KEY_H
 
